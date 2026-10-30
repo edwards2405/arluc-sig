@@ -77,12 +77,18 @@ export default function HistorialFacturas() {
 
   async function handleConfirmAnular() {
     if (!facturaToAnular) return;
+    const motivo = window.prompt(`Motivo de la anulación de ${facturaToAnular.numero_factura}:`);
+    if (!motivo?.trim()) {
+      toast.error('Debe indicar el motivo de la anulación');
+      return;
+    }
     setAnulando(true);
     try {
-      const { error } = await supabase
-        .from('facturas')
-        .update({ estado: 'anulada' })
-        .eq('id', facturaToAnular.id);
+      // Anula, devuelve stock, anula la CxC y registra el contra-asiento.
+      const { error } = await supabase.rpc('anular_factura', {
+        p_factura_id: facturaToAnular.id,
+        p_motivo: motivo.trim(),
+      });
       if (error) throw error;
       toast.success(`Factura ${facturaToAnular.numero_factura} anulada. El inventario ha sido revertido.`);
       await loadFacturas();

@@ -184,9 +184,18 @@ export default function POS() {
     toast.success('Caja limpiada correctamente');
   }
 
-  // Cargar tasa de hoy al montar
+  // Parámetros fiscales (el servidor recalcula; aquí solo se muestran)
+  const [fiscal, setFiscal] = useState({ alicuota_iva: 16, alicuota_igtf: 3, contribuyente_especial: true });
+
+  // Cargar tasa de hoy y parámetros fiscales al montar
   useEffect(() => {
     loadTasaHoy();
+    supabase
+      .from('configuracion_empresa')
+      .select('alicuota_iva, alicuota_igtf, contribuyente_especial')
+      .eq('id', 'default')
+      .maybeSingle()
+      .then(({ data }) => data && setFiscal(data));
   }, []);
 
   async function loadTasaHoy() {
@@ -307,6 +316,7 @@ export default function POS() {
           cantidad: 1,
           subtotal: parseFloat(producto.precio_usd),
           stock_disponible: producto.stock,
+          exento_iva: !!producto.exento_iva,
         },
       ]);
     }
@@ -337,8 +347,13 @@ export default function POS() {
     setCarrito(carrito.filter((i) => i.producto_id !== productoId));
   }
 
-  // Totales de la cuenta
-  const totalUSD = carrito.reduce((sum, item) => sum + item.subtotal, 0);
+  // Totales de la cuenta: base gravada + exento + IVA. Los pagos cubren este
+  // total; el IGTF se suma aparte sobre lo pagado en divisas.
+  const redondear = (n) => Math.round(n * 100) / 100;
+  const baseGravada = redondear(carrito.filter((i) => !i.exento_iva).reduce((sum, i) => sum + i.subtotal, 0));
+  const montoExento = redondear(carrito.filter((i) => i.exento_iva).reduce((sum, i) => sum + i.subtotal, 0));
+  const montoIva = redondear(baseGravada * Number(fiscal.alicuota_iva) / 100);
+  const totalUSD = redondear(baseGravada + montoExento + montoIva);
   const totalBs = tasaHoy ? totalUSD * parseFloat(tasaHoy.tasa_usd_bs) : 0;
 
   function agregarMetodoPago(metodoId = '') {
@@ -429,6 +444,20 @@ export default function POS() {
       : 0
     : Math.max(0, parseFloat((totalUSD - totalPagadoEnTienda).toFixed(2)));
 
+  // IGTF estimado sobre lo cobrado en divisas (incluye la inicial Cashea en divisas)
+  const esDivisa = (metodoId) => {
+    const config = METODOS_PAGO.find((m) => m.id === metodoId);
+    return !!config && !config.enBs && !config.isCredito && !config.isCashea;
+  };
+  const montoIgtf = fiscal.contribuyente_especial
+    ? metodosPago.reduce((sum, mp) => {
+        const metodoCobro = mp.metodo === 'cashea' ? mp.cashea_metodo_inicial || 'punto_venta' : mp.metodo;
+        return esDivisa(metodoCobro)
+          ? sum + redondear(parseFloat(mp.monto_usd || 0) * Number(fiscal.alicuota_igtf) / 100)
+          : sum;
+      }, 0)
+    : 0;
+
   function iniciarCobro() {
     if (carrito.length === 0) {
       toast.error('Carrito vacío');
@@ -463,28 +492,6 @@ export default function POS() {
     if (tieneCredito && !clienteSeleccionado) {
       toast.error('Para ventas a crédito debe seleccionar un cliente');
       return;
-    }
-
-    // Validar crédito del cliente
-    if (tieneCredito && clienteSeleccionado) {
-      if (!clienteSeleccionado.credito_activo) {
-        toast.error(`El cliente "${clienteSeleccionado.nombre}" no tiene crédito activo. Contacte al administrador.`);
-        return;
-      }
-      const limiteCredito = parseFloat(clienteSeleccionado.linea_credito || 0);
-      if (limiteCredito > 0 && montoCredito > limiteCredito) {
-        const disponible = limiteCredito;
-        const moneda = clienteSeleccionado.moneda_credito || 'usd';
-        const limiteStr = moneda === 'usd' ? formatUSD(disponible) : `Bs ${disponible.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`;
-        const continuar = window.confirm(
-          `⚠️ Límite de crédito superado\n\n` +
-          `Cliente: ${clienteSeleccionado.nombre}\n` +
-          `Límite disponible: ${limiteStr}\n` +
-          `Monto a crédito: ${formatUSD(montoCredito)}\n\n` +
-          `¿Desea continuar de todas formas?`
-        );
-        if (!continuar) return;
-      }
     }
 
     if (restante > 0.01) {
@@ -523,150 +530,42 @@ export default function POS() {
       }
     }
 
+    const pagos = metodosPago.map((mp) => ({
+      metodo_id: mp.metodo,
+      monto_usd: parseFloat(mp.monto_usd || 0),
+      ...(METODOS_PAGO.find((m) => m.id === mp.metodo)?.enBs && { monto_bs: parseFloat(mp.monto_bs || 0) }),
+      ...(mp.referencia && { referencia: mp.referencia }),
+      ...(mp.zelle_titular && { zelle_titular: mp.zelle_titular }),
+      ...(mp.zelle_email && { zelle_email: mp.zelle_email }),
+      ...(mp.metodo === 'cashea' && {
+        cashea_metodo_inicial: mp.cashea_metodo_inicial || 'punto_venta',
+        cashea_metodo_inicial_label:
+          METODOS_INICIAL_CASHEA.find((m) => m.id === (mp.cashea_metodo_inicial || 'punto_venta'))?.label,
+        cashea_referencia_inicial: mp.cashea_referencia_inicial || '',
+      }),
+    }));
+    const items = carrito.map((item) => ({ producto_id: item.producto_id, cantidad: item.cantidad }));
+
     setLoading(true);
     try {
-      const { data: numData, error: numError } = await supabase.rpc('generar_numero_factura');
-      if (numError) throw numError;
+      // Una sola transacción en el servidor: precios, IVA, IGTF, crédito,
+      // stock, cuenta por cobrar y asiento contable.
+      const emitir = (autorizarSobregiro) =>
+        supabase.rpc('emitir_factura', {
+          p_cliente_id: clienteSeleccionado?.id || null,
+          p_items: items,
+          p_pagos: pagos,
+          p_autorizar_sobregiro: autorizarSobregiro,
+        });
 
-      const tasa = parseFloat(tasaHoy.tasa_usd_bs);
-      const desgloseInicial = tieneCashea
-        ? metodosPago.map((mp) => {
-            if (mp.metodo === 'cashea') {
-              const metodoInicialConfig = METODOS_INICIAL_CASHEA.find((m) => m.id === mp.cashea_metodo_inicial);
-              const montoUSD = parseFloat(mp.monto_usd || 0);
-              const montoBs = mp.monto_bs
-                ? parseFloat(mp.monto_bs)
-                : tasa > 0
-                ? parseFloat((montoUSD * tasa).toFixed(2))
-                : 0;
-              return {
-                metodo: metodoInicialConfig?.label || 'Punto de Venta',
-                metodo_id: mp.cashea_metodo_inicial || 'punto_venta',
-                monto_usd: montoUSD,
-                monto_bs: montoBs,
-                referencia: mp.cashea_referencia_inicial || '',
-              };
-            }
-            const montoUSD = parseFloat(mp.monto_usd || 0);
-            const montoBs = mp.monto_bs
-              ? parseFloat(mp.monto_bs)
-              : tasa > 0
-              ? parseFloat((montoUSD * tasa).toFixed(2))
-              : 0;
-            return {
-              metodo: METODOS_PAGO.find((m) => m.id === mp.metodo)?.label || mp.metodo,
-              metodo_id: mp.metodo,
-              monto_usd: montoUSD,
-              monto_bs: montoBs,
-              referencia: mp.referencia || '',
-              titular: mp.zelle_titular || '',
-            };
-          })
-        : [];
+      let { data: factura, error } = await emitir(false);
 
-      const metodosStorage = metodosPago.map((mp) => {
-        const montoUSD = parseFloat(mp.monto_usd || 0);
-        const montoBs = mp.monto_bs
-          ? parseFloat(mp.monto_bs)
-          : tasa > 0
-          ? parseFloat((montoUSD * tasa).toFixed(2))
-          : 0;
-
-        if (mp.metodo === 'cashea') {
-          const inicialUSD = totalPagadoEnTienda;
-          const inicialBs = parseFloat((inicialUSD * tasa).toFixed(2));
-          const creditoUSD = Math.max(0, parseFloat((totalUSD - totalPagadoEnTienda).toFixed(2)));
-          const creditoBs = parseFloat((creditoUSD * tasa).toFixed(2));
-          const metodoInicialConfig = METODOS_INICIAL_CASHEA.find((m) => m.id === mp.cashea_metodo_inicial);
-          return {
-            metodo: 'Cashea',
-            metodo_id: 'cashea',
-            monto_usd: montoUSD,
-            monto_bs: montoBs,
-            inicial_usd: inicialUSD,
-            inicial_bs: inicialBs,
-            cashea_metodo_inicial: mp.cashea_metodo_inicial || 'punto_venta',
-            cashea_metodo_inicial_label: metodoInicialConfig?.label || 'Punto de Venta',
-            cashea_referencia_inicial: mp.cashea_referencia_inicial || '',
-            credito_cashea_usd: creditoUSD,
-            credito_cashea_bs: creditoBs,
-            referencia: mp.referencia || '',
-            desglose_inicial: desgloseInicial,
-          };
-        }
-        return {
-          metodo: METODOS_PAGO.find((m) => m.id === mp.metodo)?.label || mp.metodo,
-          metodo_id: mp.metodo,
-          monto_usd: montoUSD,
-          monto_bs: montoBs,
-          ...(mp.referencia && { referencia: mp.referencia }),
-          ...(mp.zelle_titular && { zelle_titular: mp.zelle_titular }),
-          ...(mp.zelle_email && { zelle_email: mp.zelle_email }),
-        };
-      });
-
-      const invoicePayload = {
-        numero_factura: numData,
-        cliente_id: clienteSeleccionado?.id || null,
-        vendedor_id: profile.id,
-        tasa_id: tasaHoy.id,
-        descuento_usd: 0,
-        total_usd: totalUSD,
-        total_bs: totalBs,
-        metodos_pago: metodosStorage,
-      };
-
-      let factura;
-      let { data: factData, error: factError } = await supabase.from('facturas').insert(invoicePayload).select().single();
-
-      if (factError && factError.code === '23505' && factError.message?.includes('facturas_numero_factura_key')) {
-        const { data: nuevoNum } = await supabase.rpc('generar_numero_factura');
-        if (nuevoNum) {
-          invoicePayload.numero_factura = nuevoNum;
-          const retryRes = await supabase.from('facturas').insert(invoicePayload).select().single();
-          factData = retryRes.data;
-          factError = retryRes.error;
-        }
+      if (error?.hint === 'SOBREGIRO_CREDITO' && ['admin', 'gerente'].includes(profile?.rol)) {
+        const autorizar = window.confirm(`⚠️ ${error.message}\n\n¿Autoriza el sobregiro bajo su responsabilidad?`);
+        if (!autorizar) return;
+        ({ data: factura, error } = await emitir(true));
       }
-
-      if (factError) {
-        if (factError.message?.includes('subtotal_usd')) {
-          const { data: retryData, error: retryError } = await supabase
-            .from('facturas')
-            .insert({ ...invoicePayload, subtotal_usd: totalUSD })
-            .select()
-            .single();
-          if (retryError) throw retryError;
-          factura = retryData;
-        } else {
-          throw factError;
-        }
-      } else {
-        factura = factData;
-      }
-
-      const detallesBase = carrito.map((item) => ({
-        factura_id: factura.id,
-        producto_id: item.producto_id,
-        producto_nombre: item.producto_nombre,
-        cantidad: item.cantidad,
-        precio_unitario_usd: item.precio_unitario,
-      }));
-
-      const { error: detError } = await supabase.from('detalles_factura').insert(detallesBase);
-
-      if (detError) {
-        if (detError.message?.includes('subtotal_usd') || detError.code === '23502') {
-          const detallesConSubtotal = carrito.map((item) => ({
-            ...detallesBase.find((d) => d.producto_id === item.producto_id),
-            subtotal_usd: item.subtotal,
-          }));
-          const { error: detRetryError } = await supabase.from('detalles_factura').insert(detallesConSubtotal);
-          if (detRetryError) throw detRetryError;
-        } else {
-          throw detError;
-        }
-      }
+      if (error) throw error;
 
       setFacturaEmitida({
         ...factura,
@@ -674,10 +573,10 @@ export default function POS() {
         detalles: carrito,
         tasa: tasaHoy,
         vendedor: profile,
-        metodos_pago_detalle: metodosStorage,
+        metodos_pago_detalle: factura.metodos_pago,
       });
 
-      toast.success(`Factura ${numData} emitida correctamente`);
+      toast.success(`Factura ${factura.numero_factura} emitida correctamente`);
 
       if (cuentas.length > 1) {
         const remaining = cuentas.filter((c) => c.id !== cuentaActiva.id);
@@ -794,6 +693,11 @@ export default function POS() {
         <POSPaymentSection
           totalUSD={totalUSD}
           totalBs={totalBs}
+          baseGravada={baseGravada}
+          montoExento={montoExento}
+          montoIva={montoIva}
+          montoIgtf={montoIgtf}
+          fiscal={fiscal}
           tasaHoy={tasaHoy}
           showPago={showPago}
           carrito={carrito}

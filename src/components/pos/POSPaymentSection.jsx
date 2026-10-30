@@ -5,6 +5,11 @@ import { formatUSD, formatBs } from '../../utils/formatters';
 export default function POSPaymentSection({
   totalUSD,
   totalBs,
+  baseGravada,
+  montoExento,
+  montoIva,
+  montoIgtf,
+  fiscal,
   tasaHoy,
   showPago,
   carrito,
@@ -33,6 +38,20 @@ export default function POSPaymentSection({
         <h3 className="card__title">Resumen</h3>
 
         <div className="pos-totals">
+          <div className="pos-totals__row">
+            <span>Base imponible</span>
+            <span>{formatUSD(baseGravada)}</span>
+          </div>
+          {montoExento > 0 && (
+            <div className="pos-totals__row">
+              <span>Exento</span>
+              <span>{formatUSD(montoExento)}</span>
+            </div>
+          )}
+          <div className="pos-totals__row">
+            <span>IVA {Number(fiscal.alicuota_iva)}%</span>
+            <span>{formatUSD(montoIva)}</span>
+          </div>
           <div className="pos-totals__row pos-totals__row--total">
             <span>Total USD</span>
             <span>{formatUSD(totalUSD)}</span>
@@ -287,6 +306,18 @@ export default function POSPaymentSection({
                   <span>{formatUSD(montoCredito)}</span>
                 </div>
               )}
+              {montoIgtf > 0 && (
+                <>
+                  <div className="pos-totals__row" style={{ color: 'var(--warning)', fontWeight: 'bold' }}>
+                    <span>+ IGTF {Number(fiscal.alicuota_igtf)}% (pagos en divisas)</span>
+                    <span>{formatUSD(montoIgtf)}</span>
+                  </div>
+                  <div className="pos-totals__row" style={{ fontWeight: 'bold' }}>
+                    <span>Total a cobrar con IGTF</span>
+                    <span>{formatUSD(totalUSD + montoIgtf)}</span>
+                  </div>
+                </>
+              )}
               {restante > 0.01 && (
                 <div className="pos-totals__row">
                   <span>Restante</span>
@@ -302,7 +333,7 @@ export default function POSPaymentSection({
                 onClick={onEmitirFactura}
                 disabled={loading || restante > 0.01}
               >
-                {loading ? 'Procesando...' : `Emitir Factura ${formatUSD(totalUSD)}`}
+                {loading ? 'Procesando...' : `Emitir Factura ${formatUSD(totalUSD + montoIgtf)}`}
               </button>
               <button type="button" className="btn btn--ghost btn--full" onClick={onVolverAlCarrito}>
                 Volver al Carrito

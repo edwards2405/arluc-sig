@@ -272,6 +272,12 @@ export default function TicketFactura({ factura, onClose }) {
             <span>Factura:</span>
             <span><strong>{factura.numero_factura}</strong></span>
           </div>
+          {factura.numero_control && (
+            <div className="ticket__row">
+              <span>N° Control:</span>
+              <span>{factura.numero_control}</span>
+            </div>
+          )}
           <div className="ticket__row">
             <span>Fecha:</span>
             <span>{formatFecha(factura.fecha_emision || new Date(), true)}</span>
@@ -288,11 +294,11 @@ export default function TicketFactura({ factura, onClose }) {
         <div className="ticket__info">
           <div className="ticket__row">
             <span>Cliente:</span>
-            <span>{cliente?.nombre || 'Consumidor Final'}</span>
+            <span>{cliente?.nombre || factura.cliente_nombre || 'Consumidor Final'}</span>
           </div>
           <div className="ticket__row">
             <span>CI/RIF:</span>
-            <span>{cliente?.documento_identidad || 'N/A'}</span>
+            <span>{cliente?.documento_identidad || factura.cliente_documento || 'N/A'}</span>
           </div>
           {cliente?.telefono && (
             <div className="ticket__row">
@@ -325,6 +331,7 @@ export default function TicketFactura({ factura, onClose }) {
                 <tr key={i}>
                   <td style={{ textAlign: 'left' }}>
                     {item.producto_nombre || item.nombre}
+                    {item.exento_iva && ' (E)'}
                   </td>
                   <td style={{ textAlign: 'center' }}>{item.cantidad}</td>
                   <td style={{ textAlign: 'right' }}>{formatUSD(precio)}</td>
@@ -357,6 +364,30 @@ export default function TicketFactura({ factura, onClose }) {
               </div>
             </>
           ) : null}
+          {factura.iva_usd !== undefined && factura.iva_usd !== null && (
+            <>
+              <div className="ticket__row">
+                <span>Base imponible:</span>
+                <span>{formatUSD(factura.base_imponible_usd)}</span>
+              </div>
+              {Number(factura.exento_usd) > 0 && (
+                <div className="ticket__row">
+                  <span>Exento (E):</span>
+                  <span>{formatUSD(factura.exento_usd)}</span>
+                </div>
+              )}
+              <div className="ticket__row">
+                <span>IVA {Number(factura.alicuota_iva)}%:</span>
+                <span>{formatUSD(factura.iva_usd)}</span>
+              </div>
+              {Number(factura.igtf_usd) > 0 && (
+                <div className="ticket__row">
+                  <span>IGTF {Number(factura.alicuota_igtf)}% s/ {formatUSD(factura.base_igtf_usd)}:</span>
+                  <span>{formatUSD(factura.igtf_usd)}</span>
+                </div>
+              )}
+            </>
+          )}
           <div className="ticket__row ticket__row--bold">
             <span>Total USD:</span>
             <span>{formatUSD(factura.total_usd)}</span>
