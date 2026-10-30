@@ -1,3 +1,4 @@
+import { puedeAcceder } from '../../../utils/permisos';
 import {
   HiOutlineHome,
   HiOutlineShoppingCart,
@@ -6,20 +7,27 @@ import {
   HiOutlineCurrencyDollar,
   HiOutlineCog6Tooth,
   HiOutlineBookOpen,
-  HiOutlineBuildingStorefront,
+  HiOutlinePresentationChartLine,
 } from 'react-icons/hi2';
 
 /**
  * Estructura de departamentos y módulos del ERP ARLUC.
  * - Los elementos individuales (Dashboard, Inventario) son enlaces directos sin acordeón.
  * - Los departamentos con múltiples funciones (Ventas, Compras, Contabilidad, etc.) se despliegan de forma ramificada.
+ * - Cada rol ve solo lo que permite la matriz de utils/permisos.js.
  */
-export const adminNavigationGroups = [
+const navigationGroups = [
   {
     id: 'dashboard',
     label: 'Dashboard',
     icon: HiOutlineHome,
     to: '/dashboard',
+  },
+  {
+    id: 'panel-gerencial',
+    label: 'Panel Gerencial (SIG)',
+    icon: HiOutlinePresentationChartLine,
+    to: '/panel-gerencial',
   },
   {
     id: 'ventas',
@@ -45,6 +53,7 @@ export const adminNavigationGroups = [
     items: [
       { to: '/proveedores', label: 'Proveedores' },
       { to: '/ordenes-compra', label: 'Órdenes de Compra' },
+      { to: '/cuentas-por-pagar', label: 'Cuentas por Pagar' },
     ],
   },
   {
@@ -79,21 +88,11 @@ export const adminNavigationGroups = [
   },
 ];
 
-export const vendedorNavigationGroups = [
-  {
-    id: 'dashboard',
-    label: 'Mi Dashboard',
-    icon: HiOutlineHome,
-    to: '/dashboard',
-  },
-  {
-    id: 'ventas',
-    label: 'Ventas',
-    icon: HiOutlineBuildingStorefront,
-    items: [
-      { to: '/pos', label: 'Punto de Venta (Caja)' },
-      { to: '/clientes', label: 'Clientes' },
-      { to: '/cuentas-por-cobrar', label: 'Cuentas por Cobrar' },
-    ],
-  },
-];
+/**
+ * Menú visible para un rol: grupos y enlaces permitidos.
+ */
+export function navegacionParaRol(rol) {
+  return navigationGroups
+    .map((grupo) => (grupo.items ? { ...grupo, items: grupo.items.filter((item) => puedeAcceder(rol, item.to)) } : grupo))
+    .filter((grupo) => (grupo.items ? grupo.items.length > 0 : puedeAcceder(rol, grupo.to)));
+}

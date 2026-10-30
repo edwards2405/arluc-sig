@@ -24,9 +24,12 @@ import LibroMayor from './pages/contabilidad/LibroMayor';
 import PlanCuentas from './pages/contabilidad/PlanCuentas';
 import BalanceComprobacion from './pages/contabilidad/BalanceComprobacion';
 import EstadosFinancieros from './pages/contabilidad/EstadosFinancieros';
+import PanelGerencial from './pages/PanelGerencial';
+import CuentasPorPagar from './pages/CuentasPorPagar';
+import { rutaInicio } from './utils/permisos';
 
 function AppRoutes() {
-  const { user, profile, loading, isAdmin } = useAuth();
+  const { user, profile, loading } = useAuth();
 
   if (loading) {
     return (
@@ -39,66 +42,38 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path="/login" element={user && profile ? <Navigate to="/dashboard" /> : <Login />} />
+      <Route path="/login" element={user && profile ? <Navigate to={rutaInicio(profile.rol)} /> : <Login />} />
       
       <Route element={
         <ProtectedRoute>
           <AppLayout />
         </ProtectedRoute>
       }>
+        {/* El acceso por rol lo decide ProtectedRoute con utils/permisos.js */}
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/panel-gerencial" element={<PanelGerencial />} />
         <Route path="/pos" element={<POS />} />
+        <Route path="/historial" element={<HistorialFacturas />} />
         <Route path="/clientes" element={<Clientes />} />
         <Route path="/cuentas-por-cobrar" element={<CuentasPorCobrar />} />
         <Route path="/cuentas-por-cobrar/reportes" element={<ReportesCxC />} />
-        
-        {/* Admin-only routes */}
-        <Route path="/reportes" element={
-          <ProtectedRoute requiereAdmin><Reportes /></ProtectedRoute>
-        } />
-        <Route path="/inventario" element={
-          <ProtectedRoute requiereAdmin><Inventario /></ProtectedRoute>
-        } />
-        <Route path="/inventario/reportes" element={
-          <ProtectedRoute requiereAdmin><ReportesInventario /></ProtectedRoute>
-        } />
-        <Route path="/proveedores" element={
-          <ProtectedRoute requiereAdmin><Proveedores /></ProtectedRoute>
-        } />
-        <Route path="/ordenes-compra" element={
-          <ProtectedRoute requiereAdmin><OrdenesCompra /></ProtectedRoute>
-        } />
-        <Route path="/tasa-cambio" element={
-          <ProtectedRoute requiereAdmin><TasaCambio /></ProtectedRoute>
-        } />
-        <Route path="/contabilidad/plan-cuentas" element={
-          <ProtectedRoute requiereAdmin><PlanCuentas /></ProtectedRoute>
-        } />
-        <Route path="/contabilidad/libro-diario" element={
-          <ProtectedRoute requiereAdmin><LibroDiario /></ProtectedRoute>
-        } />
-        <Route path="/contabilidad/libro-mayor" element={
-          <ProtectedRoute requiereAdmin><LibroMayor /></ProtectedRoute>
-        } />
-        <Route path="/contabilidad/balance-comprobacion" element={
-          <ProtectedRoute requiereAdmin><BalanceComprobacion /></ProtectedRoute>
-        } />
-        <Route path="/contabilidad/estados-financieros" element={
-          <ProtectedRoute requiereAdmin><EstadosFinancieros /></ProtectedRoute>
-        } />
-        <Route path="/usuarios" element={
-          <ProtectedRoute requiereAdmin><Usuarios /></ProtectedRoute>
-        } />
-        <Route path="/historial" element={
-          <ProtectedRoute requiereAdmin><HistorialFacturas /></ProtectedRoute>
-        } />
-        <Route path="/configuracion" element={
-          <ProtectedRoute requiereAdmin><Configuracion /></ProtectedRoute>
-        } />
+        <Route path="/cuentas-por-pagar" element={<CuentasPorPagar />} />
+        <Route path="/inventario" element={<Inventario />} />
+        <Route path="/inventario/reportes" element={<ReportesInventario />} />
+        <Route path="/proveedores" element={<Proveedores />} />
+        <Route path="/ordenes-compra" element={<OrdenesCompra />} />
+        <Route path="/tasa-cambio" element={<TasaCambio />} />
+        <Route path="/reportes" element={<Reportes />} />
+        <Route path="/contabilidad/plan-cuentas" element={<PlanCuentas />} />
+        <Route path="/contabilidad/libro-diario" element={<LibroDiario />} />
+        <Route path="/contabilidad/libro-mayor" element={<LibroMayor />} />
+        <Route path="/contabilidad/balance-comprobacion" element={<BalanceComprobacion />} />
+        <Route path="/contabilidad/estados-financieros" element={<EstadosFinancieros />} />
+        <Route path="/usuarios" element={<Usuarios />} />
+        <Route path="/configuracion" element={<Configuracion />} />
       </Route>
 
-
-      <Route path="*" element={<Navigate to={user ? "/dashboard" : "/login"} />} />
+      <Route path="*" element={<Navigate to={user ? rutaInicio(profile?.rol) : "/login"} />} />
     </Routes>
   );
 }

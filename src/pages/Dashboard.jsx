@@ -15,7 +15,9 @@ import {
 } from 'recharts';
 
 export default function Dashboard() {
-  const { profile, isAdmin } = useAuth();
+  const { profile } = useAuth();
+  // Admin, gerente y contador ven el consolidado; los demás roles, sus propias ventas
+  const isAdmin = ['admin', 'gerente', 'contador'].includes(profile?.rol);
   const [stats, setStats] = useState({
     ventasHoy: 0, ventasSemana: 0, ventasMes: 0,
     facturasHoy: 0, facturasSemana: 0, facturasMes: 0,

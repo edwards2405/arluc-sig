@@ -1,4 +1,7 @@
 -- =============================================================================
+-- Las fechas del seed son hora de Venezuela.
+set timezone to 'America/Caracas';
+-- =============================================================================
 -- ARLUC SIG · Datos de prueba (solo entorno local: `npx supabase db reset`)
 -- -----------------------------------------------------------------------------
 -- Usuarios de prueba (contraseña común para todos: Arluc.2026)
@@ -281,3 +284,13 @@ begin
                  order by random() limit 3);
 end;
 $$;
+
+-- Metas de ventas netas: empresa y cada vendedor, últimos tres meses.
+insert into public.metas_ventas (anio, mes, vendedor_id, monto_usd, creada_por)
+select extract(year from m)::int, extract(month from m)::int, v.id, v.monto,
+       'a0000000-0000-4000-8000-000000000002'
+  from generate_series(date_trunc('month', current_date) - interval '2 months', date_trunc('month', current_date), interval '1 month') m
+  cross join (values
+    (null::uuid, 28000::numeric),
+    ('a0000000-0000-4000-8000-000000000004'::uuid, 14000),
+    ('a0000000-0000-4000-8000-000000000006'::uuid, 13000)) as v(id, monto);

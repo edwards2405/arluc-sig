@@ -18,7 +18,8 @@ const MONEDAS_CREDITO = [
 
 export default function Clientes() {
   const { profile } = useAuth();
-  const isAdmin = profile?.rol === 'admin';
+  // Las condiciones de crédito las gestionan admin y gerente (la BD lo valida)
+  const isAdmin = ['admin', 'gerente'].includes(profile?.rol);
 
   const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);

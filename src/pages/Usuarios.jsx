@@ -5,6 +5,7 @@ import { formatFecha } from '../utils/formatters';
 import toast from 'react-hot-toast';
 import Pagination from '../components/common/Pagination';
 import ConfirmModal from '../components/common/ConfirmModal';
+import { ROLES_LABEL } from '../utils/permisos';
 import {
   HiOutlineUserPlus,
   HiOutlineLockClosed,
@@ -88,6 +89,17 @@ export default function Usuarios() {
     }
   }
 
+  async function cambiarRol(usuario, rol) {
+    // La BD impide quitar el rol al último administrador activo
+    const { error } = await supabase.from('usuarios').update({ rol }).eq('id', usuario.id);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success(`${usuario.nombre_completo} ahora es ${ROLES_LABEL[rol]}`);
+    loadUsuarios();
+  }
+
   function solicitarEliminacion(usuario) {
     if (usuario.id === user?.id) {
       toast.error('No puedes eliminar tu propia cuenta actual.');
@@ -168,9 +180,15 @@ export default function Usuarios() {
                   <td><strong>{u.nombre_completo}</strong></td>
                   <td style={{ color: '#A3A3A3' }}>{u.email}</td>
                   <td>
-                    <span className={`badge badge--${u.rol === 'admin' ? 'primary' : 'info'}`}>
-                      {u.rol === 'admin' ? 'Admin' : 'Vendedor'}
-                    </span>
+                    {u.id === user?.id ? (
+                      <span className="badge badge--primary">{ROLES_LABEL[u.rol]}</span>
+                    ) : (
+                      <select value={u.rol} onChange={e => cambiarRol(u, e.target.value)} title="Cambiar rol">
+                        {Object.entries(ROLES_LABEL).map(([valor, etiqueta]) => (
+                          <option key={valor} value={valor}>{etiqueta}</option>
+                        ))}
+                      </select>
+                    )}
                   </td>
                   <td>
                     <span className={`badge ${u.activo ? 'badge--success' : 'badge--danger'}`}>
@@ -243,8 +261,9 @@ export default function Usuarios() {
               <div className="form-group">
                 <label>Rol</label>
                 <select value={form.rol} onChange={e => setForm({...form, rol: e.target.value})}>
-                  <option value="vendedor">Vendedor</option>
-                  <option value="admin">Administrador</option>
+                  {Object.entries(ROLES_LABEL).map(([valor, etiqueta]) => (
+                    <option key={valor} value={valor}>{etiqueta}</option>
+                  ))}
                 </select>
               </div>
               <button type="submit" className="btn btn--primary btn--full" disabled={creando}>

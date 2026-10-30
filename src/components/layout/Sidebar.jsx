@@ -1,7 +1,8 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import SidebarGroup from './sidebar/SidebarGroup';
-import { adminNavigationGroups, vendedorNavigationGroups } from './sidebar/sidebarConfig';
+import { navegacionParaRol } from './sidebar/sidebarConfig';
+import { ROLES_LABEL } from '../../utils/permisos';
 import {
   HiOutlineArrowRightOnRectangle,
   HiOutlineBars3,
@@ -9,10 +10,10 @@ import {
 } from 'react-icons/hi2';
 
 export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) {
-  const { profile, isAdmin, signOut } = useAuth();
+  const { profile, signOut } = useAuth();
   const navigate = useNavigate();
 
-  const groups = isAdmin ? adminNavigationGroups : vendedorNavigationGroups;
+  const groups = navegacionParaRol(profile?.rol);
 
   async function handleSignOut() {
     await signOut();
@@ -109,7 +110,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
               <div className="sidebar__user-info">
                 <span className="sidebar__user-name">{profile?.nombre_completo}</span>
                 <span className={`sidebar__user-role sidebar__user-role--${profile?.rol}`}>
-                  {profile?.rol === 'admin' ? 'Administrador' : 'Vendedor'}
+                  {ROLES_LABEL[profile?.rol] || profile?.rol}
                 </span>
               </div>
             </div>

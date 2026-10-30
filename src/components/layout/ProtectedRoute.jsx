@@ -1,8 +1,10 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
+import { puedeAcceder, rutaInicio } from '../../utils/permisos';
 import { useAuth } from '../../contexts/AuthContext';
 
-export default function ProtectedRoute({ children, requiereAdmin = false }) {
-  const { user, profile, loading, isAdmin, signOut } = useAuth();
+export default function ProtectedRoute({ children }) {
+  const { user, profile, loading, signOut } = useAuth();
+  const { pathname } = useLocation();
 
   if (loading) {
     return (
@@ -47,8 +49,8 @@ export default function ProtectedRoute({ children, requiereAdmin = false }) {
     );
   }
 
-  if (requiereAdmin && !isAdmin) {
-    return <Navigate to="/pos" replace />;
+  if (!puedeAcceder(profile.rol, pathname)) {
+    return <Navigate to={rutaInicio(profile.rol)} replace />;
   }
 
   return children;
