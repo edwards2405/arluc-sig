@@ -2,7 +2,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 
 export default function ProtectedRoute({ children, requiereAdmin = false }) {
-  const { user, profile, loading, isAdmin } = useAuth();
+  const { user, profile, loading, isAdmin, signOut } = useAuth();
 
   if (loading) {
     return (
@@ -27,6 +27,21 @@ export default function ProtectedRoute({ children, requiereAdmin = false }) {
           style={{ marginTop: '1rem', padding: '0.5rem 1rem', borderRadius: '0.5rem', background: 'var(--primary)', color: '#fff', border: 'none', cursor: 'pointer' }}
         >
           Reintentar
+        </button>
+      </div>
+    );
+  }
+
+  if (!profile.activo) {
+    return (
+      <div className="loading-screen">
+        <p style={{ color: 'var(--accent-red, #EF4444)', fontWeight: 600 }}>Cuenta inactiva</p>
+        <p style={{ fontSize: '0.875rem', opacity: 0.8, marginTop: '0.5rem' }}>Un administrador debe activar su usuario y asignarle un rol.</p>
+        <button
+          onClick={signOut}
+          style={{ marginTop: '1rem', padding: '0.5rem 1rem', borderRadius: '0.5rem', background: 'var(--primary)', color: '#fff', border: 'none', cursor: 'pointer' }}
+        >
+          Cerrar sesión
         </button>
       </div>
     );

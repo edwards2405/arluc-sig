@@ -107,9 +107,9 @@ export function AuthProvider({ children }) {
   }
 
   async function createUser(email, password, nombreCompleto, rol) {
-    // Use the admin's current session to create user via signUp
-    // Note: This will sign the admin out and sign in as the new user
-    // We need to use a different approach - use the Supabase REST API directly
+    // El registro se hace por REST para no reemplazar la sesión del admin.
+    // La base de datos crea el perfil como vendedor INACTIVO (ignora el rol
+    // enviado); luego el admin, con su sesión, asigna el rol y lo activa.
     const response = await fetch(
       `${import.meta.env.VITE_SUPABASE_URL}/auth/v1/signup`,
       {
@@ -121,18 +121,23 @@ export function AuthProvider({ children }) {
         body: JSON.stringify({
           email,
           password,
-          data: {
-            nombre_completo: nombreCompleto,
-            rol: rol,
-          },
+          data: { nombre_completo: nombreCompleto },
         }),
       }
     );
 
     const data = await response.json();
-    if (data.error || data.msg) {
-      throw new Error(data.error || data.msg || 'Error al crear usuario');
+    if (!response.ok || data.error || data.msg) {
+      throw new Error(data.error_description || data.msg || data.error || 'Error al crear usuario');
     }
+
+    const nuevoId = data.user?.id ?? data.id;
+    const { error: perfilError } = await supabase
+      .from('usuarios')
+      .update({ rol, activo: true })
+      .eq('id', nuevoId);
+    if (perfilError) throw perfilError;
+
     return data;
   }
 

@@ -20,6 +20,18 @@ export function formatBs(amount) {
 }
 
 /**
+ * Convert to Date. Date-only strings (YYYY-MM-DD) are read as a local day:
+ * new Date('2026-10-30') is UTC midnight, which in Venezuela is the day before.
+ */
+export function parseFecha(fecha) {
+  if (typeof fecha === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+    const [anio, mes, dia] = fecha.split('-').map(Number);
+    return new Date(anio, mes - 1, dia);
+  }
+  return new Date(fecha);
+}
+
+/**
  * Format a date to locale string
  */
 export function formatFecha(fecha, includeTime = false) {
@@ -30,7 +42,7 @@ export function formatFecha(fecha, includeTime = false) {
     year: 'numeric',
     ...(includeTime && { hour: '2-digit', minute: '2-digit' }),
   };
-  return new Date(fecha).toLocaleDateString('es-VE', options);
+  return parseFecha(fecha).toLocaleDateString('es-VE', options);
 }
 
 /**
@@ -38,7 +50,7 @@ export function formatFecha(fecha, includeTime = false) {
  */
 export function formatFechaCorta(fecha) {
   if (!fecha) return '';
-  return new Date(fecha).toLocaleDateString('es-VE', {
+  return parseFecha(fecha).toLocaleDateString('es-VE', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
