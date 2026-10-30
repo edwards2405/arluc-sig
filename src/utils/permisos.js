@@ -36,6 +36,7 @@ export const ACCESO_RUTAS = {
   '/contabilidad/balance-comprobacion': DIRECCION,
   '/contabilidad/estados-financieros': DIRECCION,
   '/contabilidad/libros-fiscales': DIRECCION,
+  '/contabilidad/cierre': DIRECCION,
   '/usuarios': ['admin'],
   '/configuracion': ['admin', 'gerente'],
 };

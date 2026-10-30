@@ -362,3 +362,15 @@ begin
   end loop;
 end;
 $$;
+
+-- Cierre contable de los meses ya terminados (revaluación cambiaria y bloqueo).
+do $$
+declare
+  m date;
+begin
+  for m in select generate_series(date_trunc('month', (select min(fecha) from public.asientos_contables)),
+                                  date_trunc('month', current_date) - interval '1 month', interval '1 month')::date loop
+    perform interno.cerrar_mes(extract(year from m)::int, extract(month from m)::int);
+  end loop;
+end;
+$$;

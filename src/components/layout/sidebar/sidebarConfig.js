@@ -67,6 +67,7 @@ const navigationGroups = [
       { to: '/contabilidad/balance-comprobacion', label: 'Balance de Comprobación' },
       { to: '/contabilidad/estados-financieros', label: 'Estados Financieros' },
       { to: '/contabilidad/libros-fiscales', label: 'Libros Fiscales (IVA)' },
+      { to: '/contabilidad/cierre', label: 'Cierre Contable' },
     ],
   },
   {

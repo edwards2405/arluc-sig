@@ -27,6 +27,7 @@ import EstadosFinancieros from './pages/contabilidad/EstadosFinancieros';
 import PanelGerencial from './pages/PanelGerencial';
 import CuentasPorPagar from './pages/CuentasPorPagar';
 import LibrosFiscales from './pages/contabilidad/LibrosFiscales';
+import CierreContable from './pages/contabilidad/CierreContable';
 import { rutaInicio } from './utils/permisos';
 
 function AppRoutes() {
@@ -71,6 +72,7 @@ function AppRoutes() {
         <Route path="/contabilidad/balance-comprobacion" element={<BalanceComprobacion />} />
         <Route path="/contabilidad/estados-financieros" element={<EstadosFinancieros />} />
         <Route path="/contabilidad/libros-fiscales" element={<LibrosFiscales />} />
+        <Route path="/contabilidad/cierre" element={<CierreContable />} />
         <Route path="/usuarios" element={<Usuarios />} />
         <Route path="/configuracion" element={<Configuracion />} />
       </Route>
