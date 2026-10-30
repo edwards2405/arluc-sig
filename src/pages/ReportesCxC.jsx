@@ -10,6 +10,7 @@ import CxCPaymentsReport from '../components/cxc/reportes/CxCPaymentsReport';
 import CxCOverdueReport from '../components/cxc/reportes/CxCOverdueReport';
 import CxCCreditsReport from '../components/cxc/reportes/CxCCreditsReport';
 import { exportarCxCExcel } from '../components/cxc/reportes/cxcReportExport';
+import { imprimirCon } from '../utils/xlsxFormateado';
 
 import {
   HiOutlineCreditCard,
@@ -22,6 +23,7 @@ import {
   HiOutlineBanknotes,
   HiOutlineExclamationTriangle,
   HiOutlineReceiptPercent,
+  HiOutlinePrinter,
 } from 'react-icons/hi2';
 
 export default function ReportesCxC() {
@@ -133,6 +135,14 @@ export default function ReportesCxC() {
             title="Descargar libro Excel con todos los reportes de CxC"
           >
             <HiOutlineArrowDownTray /> Excel (.xlsx)
+          </button>
+          <button
+            type="button"
+            className="btn btn--outline"
+            onClick={() => imprimirCon(handleExportarExcel)}
+            title="Imprimir o guardar como PDF todos los reportes de CxC"
+          >
+            <HiOutlinePrinter /> Imprimir
           </button>
         </div>
       </div>

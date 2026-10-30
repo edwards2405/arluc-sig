@@ -98,10 +98,14 @@
 /* ============================================
    BASE RESET
    ============================================ */
-*, *::before, *::after {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+/* El reset va en la capa base: fuera de una capa anularía todas las utilidades
+   de espaciado de Tailwind v4 (p-4, py-2, mb-6...), que viven en @layer utilities. */
+@layer base {
+  *, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
 }
 
 html {

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import * as XLSX from 'xlsx';
+import { XLSX, imprimirCon } from '../utils/xlsxFormateado';
 import { supabase } from '../lib/supabase';
 import { formatUSD, formatBs, formatFecha } from '../utils/formatters';
 import { getEmpresaConfig } from '../utils/constants';
@@ -575,8 +575,9 @@ export default function Reportes() {
     }
   }
 
+  // Imprime (o guarda como PDF) el mismo contenido del Excel, con formato de reporte
   function exportarPDF() {
-    window.print();
+    imprimirCon(exportarExcel);
   }
 
   // ── Render ───────────────────────────────────────────────────────

@@ -9,6 +9,8 @@ import {
   HiOutlinePrinter,
 } from 'react-icons/hi2';
 import toast from 'react-hot-toast';
+import { exportarExcel, imprimirReporte } from '../../utils/reportes';
+import { formatFecha as formatearFecha } from '../../utils/formatters';
 import { fetchCuentasOperativas, fetchMovimientosCuenta } from '../../services/contabilidadService';
 
 function cuentaEsDeudora(cuenta) {
@@ -160,51 +162,57 @@ export default function LibroMayor() {
   const formatBolivares = (amount) =>
     `Bs. ${Number(amount || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  // Exportar a CSV
-  const handleExportCSV = () => {
+  // Modelo común para Excel e impresión
+  const construirReporte = () => {
+    const filas = movimientosFiltrados.map((m) => ({
+      fecha: m.asientos_contables?.fecha,
+      numero: m.asientos_contables?.numero,
+      glosa: m.asientos_contables?.glosa,
+      debe: Number(m.debe || 0),
+      haber: Number(m.haber || 0),
+      saldo: Number(m.saldoAcumulado || 0),
+      debeVes: Number(m.debe_ves || 0),
+      haberVes: Number(m.haber_ves || 0),
+      saldoVes: Number(m.saldoAcumuladoVes || 0),
+    }));
+    const periodo = `${fechaDesde ? formatearFecha(fechaDesde) : 'Inicio'} al ${fechaHasta ? formatearFecha(fechaHasta) : 'día de hoy'}`;
+    return {
+      titulo: `Libro Mayor · ${cuentaActiva.codigo} ${cuentaActiva.nombre}`,
+      subtitulo: `Movimientos del ${periodo} · Naturaleza ${cuentaActiva.naturaleza?.toLowerCase()}`,
+      archivo: `Libro_Mayor_${cuentaActiva.codigo}_${fechaHasta || new Date().toLocaleDateString('en-CA')}`,
+      resumen: [
+        { etiqueta: 'Saldo final USD', valor: saldoFinal, tipo: 'usd' },
+        { etiqueta: 'Saldo final Bs', valor: saldoFinalVes, tipo: 'bs' },
+        { etiqueta: 'Movimientos', valor: filas.length, tipo: 'numero' },
+      ],
+      secciones: [{
+        columnas: [
+          { titulo: 'Fecha', clave: 'fecha', tipo: 'fecha' },
+          { titulo: 'Asiento', clave: 'numero', tipo: 'codigo' },
+          { titulo: 'Concepto', clave: 'glosa', tipo: 'texto', ancho: 42 },
+          { titulo: 'Debe', clave: 'debe', tipo: 'usd' },
+          { titulo: 'Haber', clave: 'haber', tipo: 'usd' },
+          { titulo: 'Saldo', clave: 'saldo', tipo: 'usd' },
+          { titulo: 'Debe Bs', clave: 'debeVes', tipo: 'bs' },
+          { titulo: 'Haber Bs', clave: 'haberVes', tipo: 'bs' },
+          { titulo: 'Saldo Bs', clave: 'saldoVes', tipo: 'bs' },
+        ],
+        filas,
+      }],
+      calidad: {
+        fuente: 'Asientos contables asentados (inmutables) de la cuenta.',
+        oportunidad: 'Calculado al momento de la consulta.',
+      },
+    };
+  };
+
+  const handleExportCSV = async () => {
     if (!cuentaActiva || movimientosFiltrados.length === 0) {
       toast.error('No hay movimientos para exportar');
       return;
     }
-
-    const headers = [
-      'Fecha',
-      'Número Asiento',
-      'Concepto / Glosa',
-      'Módulo',
-      'Debe ($)',
-      'Haber ($)',
-      'Debe (Bs.)',
-      'Haber (Bs.)',
-      'Saldo Acumulado ($)',
-      'Saldo Acumulado (Bs.)',
-    ];
-    const rows = movimientosFiltrados.map((m) => {
-      const debe = Number(m.debe || 0);
-      const haber = Number(m.haber || 0);
-      return [
-        `"${m.asientos_contables?.fecha || ''}"`,
-        `"${m.asientos_contables?.numero || ''}"`,
-        `"${(m.asientos_contables?.glosa || '').replace(/"/g, '""')}"`,
-        `"${m.asientos_contables?.modulo || ''}"`,
-        debe.toFixed(2),
-        haber.toFixed(2),
-        Number(m.debe_ves || 0).toFixed(2),
-        Number(m.haber_ves || 0).toFixed(2),
-        Number(m.saldoAcumulado || 0).toFixed(2),
-        Number(m.saldoAcumuladoVes || 0).toFixed(2),
-      ].join(',');
-    });
-
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `LibroMayor_${cuentaActiva.codigo}_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    toast.success('Libro Mayor exportado a CSV exitosamente');
+    await exportarExcel(construirReporte());
+    toast.success('Libro Mayor exportado a Excel');
   };
 
   return (
@@ -240,13 +248,13 @@ export default function LibroMayor() {
           <button
             className="btn btn--secondary"
             onClick={handleExportCSV}
-            title="Exportar movimientos a CSV"
+            title="Exportar movimientos a Excel"
           >
-            <HiOutlineDocumentArrowDown /> Exportar CSV
+            <HiOutlineDocumentArrowDown /> Excel
           </button>
           <button
             className="btn btn--secondary"
-            onClick={() => window.print()}
+            onClick={() => cuentaActiva && movimientosFiltrados.length ? imprimirReporte(construirReporte()) : toast.error('Seleccione una cuenta con movimientos')}
             title="Imprimir Libro Mayor"
           >
             <HiOutlinePrinter /> Imprimir

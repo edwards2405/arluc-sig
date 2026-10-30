@@ -11,6 +11,8 @@ import {
   HiOutlineArrowPath,
 } from 'react-icons/hi2';
 import toast from 'react-hot-toast';
+import { exportarExcel, imprimirReporte } from '../../utils/reportes';
+import { formatFecha as formatearFecha } from '../../utils/formatters';
 import { fetchBalanceComprobacion } from '../../services/contabilidadService';
 
 export default function BalanceComprobacion() {
@@ -87,34 +89,65 @@ export default function BalanceComprobacion() {
     };
   }, [datosFiltrados]);
 
-  // Export CSV
-  const handleExportCSV = () => {
+  // Modelo común para Excel e impresión
+  const construirReporte = () => {
+    const columnas = [
+      { titulo: 'Código', clave: 'codigo', tipo: 'codigo' },
+      { titulo: 'Cuenta', clave: 'nombre', tipo: 'texto', ancho: 40 },
+      { titulo: 'Tipo', clave: 'tipo', tipo: 'texto' },
+      { titulo: 'Debe', clave: 'totalDebe', tipo: 'usd' },
+      { titulo: 'Haber', clave: 'totalHaber', tipo: 'usd' },
+      { titulo: 'Saldo deudor', clave: 'saldoDeudor', tipo: 'usd' },
+      { titulo: 'Saldo acreedor', clave: 'saldoAcreedor', tipo: 'usd' },
+    ];
+    const columnasBs = [
+      { titulo: 'Código', clave: 'codigo', tipo: 'codigo' },
+      { titulo: 'Cuenta', clave: 'nombre', tipo: 'texto', ancho: 40 },
+      { titulo: 'Debe Bs', clave: 'totalDebeVes', tipo: 'bs' },
+      { titulo: 'Haber Bs', clave: 'totalHaberVes', tipo: 'bs' },
+      { titulo: 'Saldo deudor Bs', clave: 'saldoDeudorVes', tipo: 'bs' },
+      { titulo: 'Saldo acreedor Bs', clave: 'saldoAcreedorVes', tipo: 'bs' },
+    ];
+    const periodo = `${fechaDesde ? formatearFecha(fechaDesde) : 'Inicio de operaciones'} al ${fechaHasta ? formatearFecha(fechaHasta) : 'día de hoy'}`;
+    return {
+      titulo: 'Balance de Comprobación',
+      subtitulo: `Sumas y saldos del ${periodo}`,
+      archivo: `Balance_de_Comprobacion_${fechaHasta || new Date().toLocaleDateString('en-CA')}`,
+      resumen: [
+        { etiqueta: 'Total debe', valor: totales.totalDebe, tipo: 'usd' },
+        { etiqueta: 'Total haber', valor: totales.totalHaber, tipo: 'usd' },
+        { etiqueta: 'Sumas iguales', valor: totales.sumasCuadran ? 'Sí' : 'No', tipo: 'texto' },
+        { etiqueta: 'Saldos iguales', valor: totales.saldosCuadran ? 'Sí' : 'No', tipo: 'texto' },
+      ],
+      hojas: [
+        {
+          nombre: 'En USD', titulo: 'Balance de Comprobación (USD)',
+          secciones: [{ columnas, filas: [...datosFiltrados, {
+            codigo: '', nombre: 'Totales', tipo: '', totalDebe: totales.totalDebe, totalHaber: totales.totalHaber,
+            saldoDeudor: totales.totalSaldoDeudor, saldoAcreedor: totales.totalSaldoAcreedor, _estilo: 'total' }] }],
+        },
+        {
+          nombre: 'En Bs', titulo: 'Balance de Comprobación (Bs)',
+          secciones: [{ columnas: columnasBs, filas: [...datosFiltrados, {
+            codigo: '', nombre: 'Totales', totalDebeVes: totales.totalDebeVes, totalHaberVes: totales.totalHaberVes,
+            saldoDeudorVes: totales.totalSaldoDeudorVes, saldoAcreedorVes: totales.totalSaldoAcreedorVes, _estilo: 'total' }] }],
+        },
+      ],
+      calidad: {
+        fuente: 'Libro mayor de todas las cuentas de detalle con movimiento.',
+        confiabilidad: totales.sumasCuadran && totales.saldosCuadran ? 'Sumas y saldos iguales: la partida doble se cumple.' : 'Revise: sumas o saldos no cuadran.',
+        oportunidad: 'Calculado al momento de la consulta.',
+      },
+    };
+  };
+
+  const handleExportCSV = async () => {
     if (datosFiltrados.length === 0) {
       toast.error('No hay datos para exportar');
       return;
     }
-    const headers = ['Código', 'Cuenta', 'Tipo', 'Naturaleza', 'Debe (USD)', 'Haber (USD)', 'Saldo Deudor', 'Saldo Acreedor', 'Debe (Bs.)', 'Haber (Bs.)'];
-    const rows = datosFiltrados.map((c) => [
-      `"${c.codigo}"`,
-      `"${c.nombre}"`,
-      `"${c.tipo}"`,
-      `"${c.naturaleza}"`,
-      c.totalDebe.toFixed(2),
-      c.totalHaber.toFixed(2),
-      c.saldoDeudor.toFixed(2),
-      c.saldoAcreedor.toFixed(2),
-      c.totalDebeVes.toFixed(2),
-      c.totalHaberVes.toFixed(2),
-    ].join(','));
-
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows].join('\n');
-    const link = document.createElement('a');
-    link.href = encodeURI(csvContent);
-    link.download = `BalanceComprobacion_${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    toast.success('Balance de Comprobación exportado a CSV');
+    await exportarExcel(construirReporte());
+    toast.success('Balance de Comprobación exportado a Excel');
   };
 
   if (loading) {
@@ -154,10 +187,10 @@ export default function BalanceComprobacion() {
           <button className="btn btn--secondary" onClick={loadData} title="Refrescar">
             <HiOutlineArrowPath /> Refrescar
           </button>
-          <button className="btn btn--secondary" onClick={handleExportCSV} title="Exportar a CSV">
-            <HiOutlineDocumentArrowDown /> CSV
+          <button className="btn btn--secondary" onClick={handleExportCSV} title="Exportar a Excel">
+            <HiOutlineDocumentArrowDown /> Excel
           </button>
-          <button className="btn btn--secondary" onClick={() => window.print()} title="Imprimir">
+          <button className="btn btn--secondary" onClick={() => imprimirReporte(construirReporte())} title="Imprimir">
             <HiOutlinePrinter /> Imprimir
           </button>
         </div>

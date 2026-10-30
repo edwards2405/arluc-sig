@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import * as XLSX from 'xlsx';
+import { XLSX, imprimirCon } from '../utils/xlsxFormateado';
 import toast from 'react-hot-toast';
 import {
   HiOutlineArrowDownTray,
@@ -350,7 +350,7 @@ export default function ReportesInventario() {
       toast.error('No hay datos válidos para exportar');
       return;
     }
-    window.print();
+    imprimirCon(exportarExcel);
   }
 
   if (loading && !productos.length && !ventas.length) {

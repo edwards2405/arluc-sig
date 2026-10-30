@@ -8,6 +8,7 @@ import {
   HiOutlineCog6Tooth,
   HiOutlineBookOpen,
   HiOutlinePresentationChartLine,
+  HiOutlineDocumentChartBar,
 } from 'react-icons/hi2';
 
 /**
@@ -28,6 +29,12 @@ const navigationGroups = [
     label: 'Panel Gerencial (SIG)',
     icon: HiOutlinePresentationChartLine,
     to: '/panel-gerencial',
+  },
+  {
+    id: 'reportes-gerenciales',
+    label: 'Reportes Gerenciales',
+    icon: HiOutlineDocumentChartBar,
+    to: '/reportes-gerenciales',
   },
   {
     id: 'ventas',

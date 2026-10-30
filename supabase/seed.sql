@@ -74,7 +74,7 @@ select d::date,
        round((885 * 1.11 * power(0.9976, current_date - d::date))::numeric, 4),
        'BCV (simulada)',
        'a0000000-0000-4000-8000-000000000001'
-  from generate_series(current_date - 89, current_date, interval '1 day') as d;
+  from generate_series(current_date - 120, current_date, interval '1 day') as d;
 
 -- -----------------------------------------------------------------------------
 -- Catálogo
@@ -371,6 +371,24 @@ begin
   for m in select generate_series(date_trunc('month', (select min(fecha) from public.asientos_contables)),
                                   date_trunc('month', current_date) - interval '1 month', interval '1 month')::date loop
     perform interno.cerrar_mes(extract(year from m)::int, extract(month from m)::int);
+  end loop;
+end;
+$$;
+
+-- Reportes programados históricos (como si el cron hubiera corrido cada día).
+do $$
+declare
+  d date;
+  v_inicio date := (select min((fecha_emision at time zone 'America/Caracas')::date) from public.facturas);
+begin
+  for d in select generate_series(v_inicio, current_date - 1, interval '1 day')::date loop
+    perform interno.generar_reporte_programado('CIERRE_DIARIO', d);
+    if extract(isodow from d) = 7 and d - 6 >= v_inicio then
+      perform interno.generar_reporte_programado('RESUMEN_SEMANAL', d);
+    end if;
+    if d = (date_trunc('month', d) + interval '1 month - 1 day')::date then
+      perform interno.generar_reporte_programado('RESUMEN_MENSUAL', d);
+    end if;
   end loop;
 end;
 $$;

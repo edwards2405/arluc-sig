@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
-import * as XLSX from 'xlsx';
+import { exportarExcel, imprimirReporte } from '../../utils/reportes';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatBs, formatFecha } from '../../utils/formatters';
@@ -93,27 +93,96 @@ export default function LibrosFiscales() {
 
   useEffect(() => { cargar(); }, [cargar]);
 
-  function exportar(tipo) {
-    const filas = tipo === 'ventas'
-      ? datos.ventas.map((v, i) => ({
-          'N° Op.': i + 1, Fecha: formatFecha(v.fecha), 'Tipo doc.': v.tipo_documento, 'RIF / C.I.': v.rif, 'Nombre o razón social': v.nombre,
-          'N° Documento': v.numero_factura, 'N° Control': v.numero_control, 'Factura afectada': v.factura_afectada || '', Estado: v.estado,
-          'Total ventas con IVA': Number(v.total_bs), 'Ventas exentas': Number(v.exento_bs), 'Base imponible': Number(v.base_bs),
-          '% Alícuota': Number(v.alicuota), 'Impuesto IVA': Number(v.iva_bs), 'IVA retenido (comprador)': Number(v.iva_retenido_bs),
-          'N° comprobante retención': v.comprobante_retencion || '', IGTF: Number(v.igtf_bs), 'Tasa BCV': Number(v.tasa),
-        }))
-      : datos.compras.map((c, i) => ({
-          'N° Op.': i + 1, Fecha: formatFecha(c.fecha), 'RIF': c.rif, 'Nombre o razón social': c.nombre,
-          'N° Factura': c.numero_factura, 'N° Control': c.numero_control,
-          'Total compras con IVA': Number(c.total_bs), 'Compras exentas': Number(c.exento_bs), 'Base imponible': Number(c.base_bs),
-          '% Alícuota': Number(c.alicuota), 'Impuesto IVA (crédito fiscal)': Number(c.iva_bs), 'IVA retenido': Number(c.iva_retenido_bs),
-          'N° comprobante retención': c.comprobante_retencion || '', 'Tasa BCV': Number(c.tasa),
-        }));
-    const hoja = XLSX.utils.json_to_sheet(filas);
-    const libro = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(libro, hoja, tipo === 'ventas' ? 'Libro de Ventas' : 'Libro de Compras');
-    XLSX.writeFile(libro, `libro_${tipo}_${periodo}.xlsx`);
+  // Libros y resumen en el motor común de reportes (Excel con formato e impresión)
+  function construirLibro(tipo) {
+    const suma = (lista, k) => lista.reduce((t, x) => t + Number(x[k] || 0), 0);
+    const lista = tipo === 'ventas' ? datos.ventas : datos.compras;
+    const filas = lista.map((x, i) => ({ ...x, op: i + 1 }));
+    const columnas = [
+      { titulo: 'N°', clave: 'op', tipo: 'numero', ancho: 6 },
+      { titulo: 'Fecha', clave: 'fecha', tipo: 'fecha', ancho: 11 },
+      ...(tipo === 'ventas' ? [{ titulo: 'Tipo', clave: 'tipo_documento', tipo: 'texto', ancho: 6 }] : []),
+      { titulo: 'RIF / C.I.', clave: 'rif', tipo: 'texto', ancho: 14 },
+      { titulo: 'Nombre o razón social', clave: 'nombre', tipo: 'texto', ancho: 30 },
+      { titulo: tipo === 'ventas' ? 'N° documento' : 'N° factura', clave: 'numero_factura', tipo: 'codigo', ancho: 15 },
+      { titulo: 'N° control', clave: 'numero_control', tipo: 'codigo', ancho: 13 },
+      ...(tipo === 'ventas' ? [{ titulo: 'Factura afectada', clave: 'factura_afectada', tipo: 'codigo', ancho: 15 }] : []),
+      { titulo: 'Total con IVA', clave: 'total_bs', tipo: 'bs' },
+      { titulo: 'Exento', clave: 'exento_bs', tipo: 'bs' },
+      { titulo: 'Base imponible', clave: 'base_bs', tipo: 'bs' },
+      { titulo: '% IVA', clave: 'alicuota', tipo: 'porcentaje', ancho: 7 },
+      { titulo: tipo === 'ventas' ? 'Débito fiscal' : 'Crédito fiscal', clave: 'iva_bs', tipo: 'bs' },
+      { titulo: 'IVA retenido', clave: 'iva_retenido_bs', tipo: 'bs' },
+      { titulo: 'Comprobante', clave: 'comprobante_retencion', tipo: 'codigo', ancho: 16 },
+      ...(tipo === 'ventas' ? [{ titulo: 'IGTF', clave: 'igtf_bs', tipo: 'bs' }] : []),
+    ];
+    const totales = { nombre: 'Totales del período', total_bs: suma(lista, 'total_bs'), exento_bs: suma(lista, 'exento_bs'),
+      base_bs: suma(lista, 'base_bs'), iva_bs: suma(lista, 'iva_bs'), iva_retenido_bs: suma(lista, 'iva_retenido_bs'),
+      igtf_bs: suma(lista, 'igtf_bs'), _estilo: 'total' };
+    return {
+      titulo: tipo === 'ventas' ? 'Libro de Ventas' : 'Libro de Compras',
+      subtitulo: `Período fiscal ${String(mes).padStart(2, '0')}/${anio} · Montos en Bs a la tasa BCV de cada documento`,
+      moneda: 'VES',
+      archivo: `Libro_de_${tipo === 'ventas' ? 'Ventas' : 'Compras'}_${periodo}`,
+      resumen: [
+        { etiqueta: 'Documentos', valor: lista.length, tipo: 'numero' },
+        { etiqueta: 'Base imponible', valor: totales.base_bs, tipo: 'bs' },
+        { etiqueta: tipo === 'ventas' ? 'Débito fiscal' : 'Crédito fiscal', valor: totales.iva_bs, tipo: 'bs' },
+        { etiqueta: 'IVA retenido', valor: totales.iva_retenido_bs, tipo: 'bs' },
+      ],
+      secciones: [{ columnas, filas: [...filas, totales] }],
+      notas: tipo === 'ventas'
+        ? ['Las facturas anuladas se listan en cero. Las notas de crédito (NC) restan y las de débito (ND) suman.']
+        : ['Las compras se registran a la tasa BCV del día de recepción de la factura del proveedor.'],
+      calidad: {
+        fuente: 'Facturas, notas fiscales, compras y retenciones registradas en el sistema.',
+        confiabilidad: 'El IVA del libro concilia con el saldo contable de IVA débito/crédito fiscal.',
+        oportunidad: 'Generado al momento; el libro del mes se cierra al cerrar el período contable.',
+      },
+    };
   }
+
+  function construirResumen() {
+    const r = datos.resumen;
+    const fila = (concepto, monto, estilo) => ({ concepto, monto, _estilo: estilo });
+    const columnas = [{ titulo: 'Concepto', clave: 'concepto', tipo: 'texto', ancho: 58 }, { titulo: 'Monto', clave: 'monto', tipo: 'bs' }];
+    return {
+      titulo: 'Resumen de IVA para la declaración',
+      subtitulo: `Período fiscal ${r.periodo} · Contribuyente especial`,
+      moneda: 'VES',
+      archivo: `Resumen_IVA_${periodo}`,
+      resumen: [{ etiqueta: 'Cuota de IVA a pagar', valor: r.cuota_a_pagar_bs, tipo: 'bs' },
+        { etiqueta: 'Retenciones por enterar', valor: r.retenciones_practicadas.pendientes_bs, tipo: 'bs' }],
+      secciones: [
+        { titulo: 'Declaración mensual de IVA', columnas, filas: [
+          fila(`Débito fiscal neto (${r.ventas.documentos} facturas, ${r.ventas.notas_credito ?? 0} NC, ${r.ventas.notas_debito ?? 0} ND)`, r.ventas.debito_fiscal_bs),
+          fila(`(−) Crédito fiscal (${r.compras.documentos} compras)`, -r.compras.credito_fiscal_bs),
+          fila('(−) Retenciones soportadas con comprobante', -r.retenciones_soportadas_bs),
+          fila('Cuota de IVA a pagar', r.cuota_a_pagar_bs, 'total'),
+          fila('Excedente de crédito fiscal para el mes siguiente', r.excedente_credito_bs),
+        ] },
+        { titulo: 'Obligaciones quincenales', columnas, filas: [
+          fila('Retenciones practicadas · 1ra quincena', r.retenciones_practicadas.quincena_1_bs),
+          fila('Retenciones practicadas · 2da quincena', r.retenciones_practicadas.quincena_2_bs),
+          fila('Ya enteradas al SENIAT', r.retenciones_practicadas.enteradas_bs),
+          fila('Pendientes por enterar', r.retenciones_practicadas.pendientes_bs, 'subtotal'),
+          fila('IGTF percibido · 1ra quincena', r.igtf_percibido.quincena_1_bs),
+          fila('IGTF percibido · 2da quincena', r.igtf_percibido.quincena_2_bs),
+        ] },
+      ],
+      notas: ['Verifique las fechas de pago en el calendario de contribuyentes especiales del SENIAT.'],
+    };
+  }
+
+  async function exportar(tipo) {
+    try {
+      await exportarExcel(tipo === 'resumen' ? construirResumen() : construirLibro(tipo));
+    } catch (e) {
+      toast.error('No se pudo generar el Excel: ' + e.message);
+    }
+  }
+
+  const imprimir = (tipo) => imprimirReporte(tipo === 'resumen' ? construirResumen() : construirLibro(tipo));
 
   async function registrarComprobante(r) {
     const numero = window.prompt(`Comprobante de retención entregado por ${r.tercero_nombre} (14 dígitos: AAAAMM + 8):`,
@@ -170,6 +239,13 @@ export default function LibrosFiscales() {
       {loading && <div className="page-loading"><div className="loading-spinner" /><p>Generando libros...</p></div>}
 
       {!loading && pestana === 'resumen' && r && (
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+          <button className="btn btn--secondary btn--sm" onClick={() => exportar('resumen')}><HiOutlineArrowDownTray /> Excel</button>
+          <button className="btn btn--secondary btn--sm" onClick={() => imprimir('resumen')}><HiOutlinePrinter /> Imprimir</button>
+        </div>
+      )}
+
+      {!loading && pestana === 'resumen' && r && (
         <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))' }}>
           <div className="card">
             <h3 className="card__title">Declaración de IVA · {r.periodo}</h3>
@@ -209,7 +285,10 @@ export default function LibrosFiscales() {
             <h3 className="card__title" style={{ margin: 0 }}>
               {pestana === 'ventas' ? 'Libro de Ventas' : 'Libro de Compras'} · {String(mes).padStart(2, '0')}/{anio}
             </h3>
-            <button className="btn btn--secondary btn--sm" onClick={() => exportar(pestana)}><HiOutlineArrowDownTray /> Excel</button>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="btn btn--secondary btn--sm" onClick={() => exportar(pestana)}><HiOutlineArrowDownTray /> Excel</button>
+              <button className="btn btn--secondary btn--sm" onClick={() => imprimir(pestana)}><HiOutlinePrinter /> Imprimir</button>
+            </div>
           </div>
           <div className="table-container">
             <table className="table">

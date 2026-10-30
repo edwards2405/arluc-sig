@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import { XLSX } from '../../../utils/xlsxFormateado';
 import { formatFecha } from '../../../utils/formatters';
 
 export function exportarCxCExcel({ cuentas = [], abonosHistorico = [], config = {}, tasaValor = 0 }) {

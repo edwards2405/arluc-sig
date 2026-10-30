@@ -14,6 +14,8 @@ import {
 } from 'react-icons/hi2';
 import toast from 'react-hot-toast';
 import { fetchEstadosFinancieros } from '../../services/contabilidadService';
+import { exportarExcel, imprimirReporte } from '../../utils/reportes';
+import { formatFecha as formatearFecha } from '../../utils/formatters';
 
 export default function EstadosFinancieros() {
   const [activeTab, setActiveTab] = useState('resultados'); // 'resultados' | 'balance'
@@ -124,80 +126,78 @@ export default function EstadosFinancieros() {
     setFechaHasta('');
   };
 
-  // Exportar CSV
-  const exportarCSV = () => {
-    let lineasCSV = [];
+  // Modelo común para Excel e impresión
+  const construirReporte = () => {
+    const sal = (c) => (esVes ? c.saldoVes : c.saldo);
+    const cuentas = (lista) => lista.map((c) => ({ codigo: c.codigo, cuenta: c.nombre, monto: sal(c) }));
+    const columnas = [
+      { titulo: 'Código', clave: 'codigo', tipo: 'codigo', ancho: 13 },
+      { titulo: 'Cuenta', clave: 'cuenta', tipo: 'texto', ancho: 46 },
+      { titulo: `Monto (${esVes ? 'Bs' : 'USD'})`, clave: 'monto', tipo: 'monto', ancho: 20 },
+    ];
+    const total = (texto, monto, estilo = 'subtotal') => ({ codigo: '', cuenta: texto, monto, _estilo: estilo });
+    const periodo = `${fechaDesde ? formatearFecha(fechaDesde) : 'Inicio de operaciones'} al ${fechaHasta ? formatearFecha(fechaHasta) : 'día de hoy'}`;
+    const calidad = {
+      fuente: 'Libro mayor (asientos contables generados por la operación, inmutables).',
+      confiabilidad: bg.cuadrado ? 'Partida doble verificada: Activo = Pasivo + Patrimonio.' : `Descuadre de ${fmt(bg.diferencia)}.`,
+      oportunidad: 'Calculado en el momento de la consulta con los datos al día.',
+    };
+
     if (activeTab === 'resultados') {
-      lineasCSV.push(['Estado de Resultados']);
-      lineasCSV.push([`Periodo: ${fechaDesde || 'Inicio'} a ${fechaHasta || 'Actual'}`]);
-      lineasCSV.push([`Moneda: ${moneda}`]);
-      lineasCSV.push([]);
-      lineasCSV.push(['Rubro / Código', 'Nombre de Cuenta', 'Monto']);
-
-      lineasCSV.push(['-- INGRESOS --', '', '']);
-      er.ingresos.forEach((c) => {
-        lineasCSV.push([c.codigo, c.nombre, esVes ? c.saldoVes : c.saldo]);
-      });
-      lineasCSV.push(['TOTAL INGRESOS', '', tIngresos]);
-
-      lineasCSV.push(['-- COSTOS --', '', '']);
-      er.costos.forEach((c) => {
-        lineasCSV.push([c.codigo, c.nombre, esVes ? c.saldoVes : c.saldo]);
-      });
-      lineasCSV.push(['TOTAL COSTOS', '', tCostos]);
-      lineasCSV.push(['UTILIDAD BRUTA', '', uBruta]);
-
-      lineasCSV.push(['-- GASTOS --', '', '']);
-      er.gastos.forEach((c) => {
-        lineasCSV.push([c.codigo, c.nombre, esVes ? c.saldoVes : c.saldo]);
-      });
-      lineasCSV.push(['TOTAL GASTOS', '', tGastos]);
-      lineasCSV.push(['UTILIDAD NETA DEL EJERCICIO', '', uNeta]);
-    } else {
-      lineasCSV.push(['Balance General']);
-      lineasCSV.push([`Al corte: ${fechaHasta || 'Fecha actual'}`]);
-      lineasCSV.push([`Moneda: ${moneda}`]);
-      lineasCSV.push([]);
-      lineasCSV.push(['Rubro / Código', 'Nombre de Cuenta', 'Monto']);
-
-      lineasCSV.push(['-- ACTIVOS --', '', '']);
-      bg.activos.forEach((c) => {
-        lineasCSV.push([c.codigo, c.nombre, esVes ? c.saldoVes : c.saldo]);
-      });
-      lineasCSV.push(['TOTAL ACTIVOS', '', tActivos]);
-
-      lineasCSV.push(['-- PASIVOS --', '', '']);
-      bg.pasivos.forEach((c) => {
-        lineasCSV.push([c.codigo, c.nombre, esVes ? c.saldoVes : c.saldo]);
-      });
-      lineasCSV.push(['TOTAL PASIVOS', '', tPasivos]);
-
-      lineasCSV.push(['-- PATRIMONIO --', '', '']);
-      bg.patrimonio.forEach((c) => {
-        lineasCSV.push([c.codigo, c.nombre, esVes ? c.saldoVes : c.saldo]);
-      });
-      lineasCSV.push(['Utilidad / Pérdida del Periodo', '', uEjercicio]);
-      lineasCSV.push(['TOTAL PATRIMONIO', '', tPatrimonio]);
-      lineasCSV.push(['TOTAL PASIVO + PATRIMONIO', '', tPasivoPatrimonio]);
+      return {
+        titulo: 'Estado de Resultados',
+        subtitulo: `Del ${periodo}`,
+        moneda,
+        archivo: `Estado_de_Resultados_${fechaHasta || new Date().toLocaleDateString('en-CA')}_${moneda}`,
+        resumen: [
+          { etiqueta: 'Ingresos', valor: tIngresos },
+          { etiqueta: 'Utilidad bruta', valor: uBruta },
+          { etiqueta: 'Gastos', valor: tGastos },
+          { etiqueta: 'Utilidad neta', valor: uNeta, detalle: tIngresos ? `${((uNeta / tIngresos) * 100).toFixed(1)} % de margen neto` : '' },
+        ],
+        secciones: [
+          { titulo: '1. Ingresos', columnas, filas: [...cuentas(er.ingresos), total('Total ingresos', tIngresos)] },
+          { titulo: '2. Costos de venta', columnas, filas: [...cuentas(er.costos), total('Total costos', tCostos), total('Utilidad bruta (ingresos − costos)', uBruta)] },
+          { titulo: '3. Gastos operacionales y financieros', columnas, filas: [...cuentas(er.gastos), total('Total gastos', tGastos), total('Utilidad neta del período', uNeta, 'total')] },
+        ],
+        calidad,
+      };
     }
-
-    const contenido = lineasCSV
-      .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-      .join('\n');
-    const blob = new Blob([contenido], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `Estado_${activeTab}_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    toast.success('Archivo CSV exportado exitosamente');
+    return {
+      titulo: 'Balance General',
+      subtitulo: `Al ${fechaHasta ? formatearFecha(fechaHasta) : new Date().toLocaleDateString('es-VE')}`,
+      moneda,
+      archivo: `Balance_General_${fechaHasta || new Date().toLocaleDateString('en-CA')}_${moneda}`,
+      resumen: [
+        { etiqueta: 'Total activos', valor: tActivos },
+        { etiqueta: 'Total pasivos', valor: tPasivos },
+        { etiqueta: 'Patrimonio', valor: tPatrimonio },
+        { etiqueta: 'Ecuación contable', valor: bg.cuadrado ? 'Cuadrada' : 'Descuadrada', tipo: 'texto' },
+      ],
+      secciones: [
+        { titulo: 'Activos', columnas, filas: [...cuentas(bg.activos), total('Total activos', tActivos, 'total')] },
+        { titulo: 'Pasivos', columnas, filas: [...cuentas(bg.pasivos), total('Total pasivos', tPasivos)] },
+        {
+          titulo: 'Patrimonio',
+          columnas,
+          filas: [...cuentas(bg.patrimonio), total('Resultado del ejercicio en curso', uEjercicio, 'grupo'),
+            total('Total patrimonio', tPatrimonio), total('Total pasivo + patrimonio', tPasivoPatrimonio, 'total')],
+        },
+      ],
+      calidad,
+    };
   };
 
-  const imprimir = () => {
-    window.print();
+  const exportarExcelReporte = async () => {
+    try {
+      await exportarExcel(construirReporte());
+      toast.success('Excel generado');
+    } catch (e) {
+      toast.error('No se pudo generar el Excel: ' + e.message);
+    }
   };
+
+  const imprimir = () => imprimirReporte(construirReporte());
 
   return (
     <div className="page" style={{ paddingBottom: 'env(safe-area-inset-bottom, 2rem)' }}>
@@ -235,7 +235,7 @@ export default function EstadosFinancieros() {
         <div className="flex items-center flex-wrap gap-2">
           {/* Moneda switch */}
           <div
-            className="flex items-center p-1 rounded-xl"
+            className="flex items-center gap-1 p-1 rounded-xl"
             style={{
               backgroundColor: 'var(--bg-elevated)',
               border: '1px solid var(--border)',
@@ -269,12 +269,12 @@ export default function EstadosFinancieros() {
 
           <button
             type="button"
-            onClick={exportarCSV}
+            onClick={exportarExcelReporte}
             className="btn btn--secondary flex items-center justify-center gap-1.5 text-xs"
             style={{ minHeight: 44, padding: '0 14px' }}
           >
             <HiOutlineDocumentArrowDown size={18} />
-            <span className="hidden sm:inline">Exportar</span>
+            <span className="hidden sm:inline">Excel</span>
           </button>
 
           <button

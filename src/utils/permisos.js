@@ -18,6 +18,7 @@ const DIRECCION = ['admin', 'gerente', 'contador'];
 export const ACCESO_RUTAS = {
   '/dashboard': TODOS,
   '/panel-gerencial': DIRECCION,
+  '/reportes-gerenciales': DIRECCION,
   '/pos': ['admin', 'gerente', 'vendedor'],
   '/historial': DIRECCION,
   '/clientes': ['admin', 'gerente', 'vendedor'],

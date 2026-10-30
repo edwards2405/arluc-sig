@@ -25,6 +25,7 @@ import PlanCuentas from './pages/contabilidad/PlanCuentas';
 import BalanceComprobacion from './pages/contabilidad/BalanceComprobacion';
 import EstadosFinancieros from './pages/contabilidad/EstadosFinancieros';
 import PanelGerencial from './pages/PanelGerencial';
+import ReportesGerenciales from './pages/ReportesGerenciales';
 import CuentasPorPagar from './pages/CuentasPorPagar';
 import LibrosFiscales from './pages/contabilidad/LibrosFiscales';
 import CierreContable from './pages/contabilidad/CierreContable';
@@ -54,6 +55,7 @@ function AppRoutes() {
         {/* El acceso por rol lo decide ProtectedRoute con utils/permisos.js */}
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/panel-gerencial" element={<PanelGerencial />} />
+        <Route path="/reportes-gerenciales" element={<ReportesGerenciales />} />
         <Route path="/pos" element={<POS />} />
         <Route path="/historial" element={<HistorialFacturas />} />
         <Route path="/clientes" element={<Clientes />} />
