@@ -1,13 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import {
-  getCxCConfig,
-  getAbonosCxC,
-  extraerCreditoFactura,
-  calcularDiasTranscurridos,
-  calcularMoraYSaldo,
-} from '../services/cuentasCobrarService';
+import { DEFAULT_CXC_CONFIG, fetchCxCConfig, fetchCuentasPorCobrar } from '../services/cuentasCobrarService';
 
 import CxCAgingReport from '../components/cxc/reportes/CxCAgingReport';
 import CxCClientStatement from '../components/cxc/reportes/CxCClientStatement';
@@ -33,10 +27,9 @@ import {
 export default function ReportesCxC() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const [facturas, setFacturas] = useState([]);
+  const [cuentas, setCuentas] = useState([]);
   const [tasaHoy, setTasaHoy] = useState(null);
-  const [config, setConfig] = useState(getCxCConfig);
-  const [abonosMap, setAbonosMap] = useState(getAbonosCxC);
+  const [config, setConfig] = useState(DEFAULT_CXC_CONFIG);
   const [subTab, setSubTab] = useState('aging'); // 'aging' | 'cliente' | 'resumen' | 'abonos' | 'vencidas' | 'creditos'
 
   useEffect(() => {
@@ -46,103 +39,20 @@ export default function ReportesCxC() {
   async function cargarDatos() {
     setLoading(true);
     try {
-      let facturasTotales = [];
-      const step = 1000;
-      let from = 0;
-      let hasMore = true;
-
-      while (hasMore) {
-        const { data: factData, error: fErr } = await supabase
-          .from('facturas')
-          .select(`
-            id,
-            numero_factura,
-            cliente_id,
-            vendedor_id,
-            total_usd,
-            total_bs,
-            metodos_pago,
-            estado,
-            fecha_emision,
-            clientes (
-              id,
-              nombre,
-              documento_identidad,
-              telefono,
-              email,
-              direccion
-            )
-          `)
-          .eq('estado', 'emitida')
-          .order('fecha_emision', { ascending: false })
-          .range(from, from + step - 1);
-
-        if (fErr) throw fErr;
-        if (factData && factData.length > 0) {
-          facturasTotales = facturasTotales.concat(factData);
-          from += step;
-          if (factData.length < step) hasMore = false;
-        } else {
-          hasMore = false;
-        }
-      }
-
-      const { data: tasaData } = await supabase
-        .from('tasas_cambio')
-        .select('*')
-        .order('fecha_registro', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      setFacturas(facturasTotales);
+      const [cuentasData, cfg, { data: tasaData }] = await Promise.all([
+        fetchCuentasPorCobrar(),
+        fetchCxCConfig(),
+        supabase.from('tasas_cambio').select('*').order('fecha_registro', { ascending: false }).limit(1).maybeSingle(),
+      ]);
+      setCuentas(cuentasData);
+      setConfig(cfg);
       if (tasaData) setTasaHoy(tasaData);
-      setConfig(getCxCConfig());
-      setAbonosMap(getAbonosCxC());
     } catch (e) {
       console.error('Error cargando datos para reportes de CxC:', e);
     } finally {
       setLoading(false);
     }
   }
-
-  // Procesar cuentas
-  const cuentas = useMemo(() => {
-    const res = [];
-    for (const f of facturas) {
-      const creditoInfo = extraerCreditoFactura(f);
-      if (!creditoInfo.tieneCredito) continue;
-
-      const dias = calcularDiasTranscurridos(f.fecha_emision);
-      const abonos = abonosMap[f.id] || [];
-      const totalAbonado = abonos.reduce((sum, a) => sum + (parseFloat(a.monto_usd) || 0), 0);
-
-      const calculo = calcularMoraYSaldo({
-        montoOriginalUSD: creditoInfo.montoUSD,
-        totalAbonadoUSD: totalAbonado,
-        diasTranscurridos: dias,
-        diasGracia: config.diasGracia,
-        porcentajeRecargo: config.porcentajeRecargo,
-        aplicarRecargoAutomatico: config.aplicarRecargoAutomatico,
-      });
-
-      res.push({
-        id: f.id,
-        numero_factura: f.numero_factura,
-        fecha_emision: f.fecha_emision,
-        cliente: f.clientes,
-        montoOriginalUSD: creditoInfo.montoUSD,
-        montoOriginalBs: creditoInfo.montoBs,
-        diasTranscurridos: dias,
-        recargoUSD: calculo.recargoUSD,
-        abonos,
-        totalAbonadoUSD: parseFloat(totalAbonado.toFixed(2)),
-        saldoTotalUSD: calculo.saldoPendienteUSD,
-        esSolvente: calculo.esSolvente,
-        esVencida: calculo.esVencida,
-      });
-    }
-    return res;
-  }, [facturas, abonosMap, config]);
 
   // Historial plano de todos los abonos
   const abonosHistorico = useMemo(() => {

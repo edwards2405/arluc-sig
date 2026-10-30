@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatFecha, getWhatsAppUrl, getPhoneCallUrl } from '../utils/formatters';
-import { mergeClienteCredito, saveClienteCreditoLocal } from '../services/cuentasCobrarService';
 import toast from 'react-hot-toast';
 import Pagination from '../components/common/Pagination';
 import { useAuth } from '../contexts/AuthContext';
@@ -44,9 +43,9 @@ export default function Clientes() {
 
   async function loadClientes() {
     setLoading(true);
-    const { data } = await supabase.from('clientes').select('*').order('nombre');
-    const enriquecidos = (data || []).map(mergeClienteCredito);
-    setClientes(enriquecidos);
+    const { data, error } = await supabase.from('clientes').select('*').order('nombre');
+    if (error) toast.error('Error cargando clientes: ' + error.message);
+    setClientes(data || []);
     setLoading(false);
   }
 
@@ -59,29 +58,21 @@ export default function Clientes() {
         telefono: form.telefono,
         direccion: form.direccion,
         email: form.email,
+        // Las condiciones de crédito solo las fija admin/gerente (la BD lo valida)
+        ...(isAdmin && {
+          linea_credito: parseFloat(form.linea_credito) || 0,
+          credito_activo: !!form.credito_activo,
+          moneda_credito: form.moneda_credito,
+        }),
       };
 
       if (editando) {
         const { error } = await supabase.from('clientes').update(payload).eq('id', editando.id);
         if (error) throw error;
-        if (isAdmin) {
-          saveClienteCreditoLocal(editando.id, {
-            linea_credito: form.linea_credito,
-            credito_activo: form.credito_activo,
-            moneda_credito: form.moneda_credito,
-          });
-        }
         toast.success('Cliente actualizado');
       } else {
-        const { data: nuevo, error } = await supabase.from('clientes').insert(payload).select().single();
+        const { error } = await supabase.from('clientes').insert(payload);
         if (error) throw error;
-        if (isAdmin && nuevo) {
-          saveClienteCreditoLocal(nuevo.id, {
-            linea_credito: form.linea_credito,
-            credito_activo: form.credito_activo,
-            moneda_credito: form.moneda_credito,
-          });
-        }
         toast.success('Cliente creado');
       }
       setShowModal(false);
@@ -98,23 +89,12 @@ export default function Clientes() {
     if (!creditoCliente || !isAdmin) return;
     setSavingCredito(true);
     try {
-      // 1. Guardar localmente de forma inmediata y garantizada
-      saveClienteCreditoLocal(creditoCliente.id, {
-        linea_credito: creditoForm.linea_credito,
+      const { error } = await supabase.from('clientes').update({
+        linea_credito: parseFloat(creditoForm.linea_credito) || 0,
         credito_activo: creditoForm.credito_activo,
         moneda_credito: creditoForm.moneda_credito,
-      });
-
-      // 2. Intentar guardar en Supabase si la columna existe en el schema
-      try {
-        await supabase.from('clientes').update({
-          linea_credito: parseFloat(creditoForm.linea_credito) || 0,
-          credito_activo: creditoForm.credito_activo,
-          moneda_credito: creditoForm.moneda_credito,
-        }).eq('id', creditoCliente.id);
-      } catch (errSupabase) {
-        console.warn('Columna de crédito en BD aún pendiente de migración:', errSupabase);
-      }
+      }).eq('id', creditoCliente.id);
+      if (error) throw error;
 
       toast.success('Línea de crédito actualizada');
       setShowCreditoModal(false);
@@ -131,21 +111,10 @@ export default function Clientes() {
     if (!isAdmin) return;
     try {
       const nuevoEstado = !cliente.credito_activo;
-      // Guardar local
-      saveClienteCreditoLocal(cliente.id, {
-        linea_credito: cliente.linea_credito || 0,
-        credito_activo: nuevoEstado,
-        moneda_credito: cliente.moneda_credito || 'usd',
-      });
-
-      // Intentar actualizar en Supabase si la columna ya existe
-      try {
-        await supabase.from('clientes')
-          .update({ credito_activo: nuevoEstado })
-          .eq('id', cliente.id);
-      } catch (errDb) {
-        console.warn('Update credito_activo remoto omitido:', errDb);
-      }
+      const { error } = await supabase.from('clientes')
+        .update({ credito_activo: nuevoEstado })
+        .eq('id', cliente.id);
+      if (error) throw error;
 
       toast.success(nuevoEstado ? `Crédito activado para ${cliente.nombre}` : `Crédito desactivado para ${cliente.nombre}`);
       loadClientes();

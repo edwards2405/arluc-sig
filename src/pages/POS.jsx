@@ -5,7 +5,6 @@ import { METODOS_PAGO, METODOS_INICIAL_CASHEA } from '../utils/constants';
 import { formatTasa, formatUSD } from '../utils/formatters';
 import toast from 'react-hot-toast';
 import { fetchTasaBCV } from '../services/bcvService';
-import { mergeClienteCredito } from '../services/cuentasCobrarService';
 import { HiOutlineArrowPath } from 'react-icons/hi2';
 
 // Subcomponentes modulares de Caja
@@ -251,7 +250,7 @@ export default function POS() {
       .select('*')
       .or(`nombre.ilike.%${query}%,documento_identidad.ilike.%${query}%`)
       .limit(5);
-    const enriquecidos = (data || []).map(mergeClienteCredito);
+    const enriquecidos = data || [];
     setClienteResults(enriquecidos);
   }
 

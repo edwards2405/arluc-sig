@@ -1,60 +1,62 @@
--- Pruebas de reglas de negocio (ejecutar sobre una BD recién reseteada; MODIFICA datos).
--- docker cp supabase/pruebas/reglas_negocio.sql supabase_db_ARLOC:/tmp/r.sql
--- docker exec supabase_db_ARLOC psql -U postgres -f /tmp/r.sql
--- Luego: npx supabase db reset
-\set ON_ERROR_STOP off
+-- Pruebas de seguridad y reglas de negocio (RLS, inmutabilidad, partida doble).
+-- Corre dentro de una transacción que se revierte: no modifica los datos.
+--   docker cp supabase/pruebas/reglas_negocio.sql supabase_db_ARLOC:/tmp/r.sql
+--   docker exec supabase_db_ARLOC psql -U postgres -f /tmp/r.sql
 \set QUIET on
-create or replace function pg_temp.como(p uuid) returns void language sql as $$
-  select set_config('request.jwt.claims', json_build_object('sub', p, 'role','authenticated')::text, false),
-         set_config('role','authenticated', false) $$;
--- 1. venta como vendedor
-select pg_temp.como('a0000000-0000-4000-8000-000000000004');
-insert into facturas (numero_factura, vendedor_id, tasa_id, total_usd, total_bs, metodos_pago)
-values (generar_numero_factura(), 'a0000000-0000-4000-8000-000000000004', (select id from tasas_cambio where fecha_registro=current_date), 280, 1, '[]') returning numero_factura, fecha_emision::date;
-insert into detalles_factura (factura_id, producto_id, producto_nombre, cantidad, precio_unitario_usd)
-select f.id, p.id, 'x', 2, 280 from facturas f, productos p where p.sku='AUD-001' returning subtotal_usd, costo_unitario_usd;
-select 'stock AUD-001 =' , stock from productos where sku='AUD-001';
-\echo '--- 2. precio manipulado (debe fallar)'
-insert into detalles_factura (factura_id, producto_id, producto_nombre, cantidad, precio_unitario_usd)
-select f.id, p.id, 'x', 1, 1 from facturas f, productos p where p.sku='AUD-002';
-\echo '--- 3. stock insuficiente (debe fallar)'
-insert into detalles_factura (factura_id, producto_id, producto_nombre, cantidad, precio_unitario_usd)
-select f.id, p.id, 'x', 999, 450 from facturas f, productos p where p.sku='AUD-002';
-\echo '--- 4. vendedor cambia credito (debe fallar)'
-update clientes set linea_credito = 99999 where documento_identidad='V-19842516';
-\echo '--- 5. vendedor anula factura (0 filas)'
-update facturas set estado='anulada';
-\echo '--- 6. vendedor ve asientos (0)'
-select count(*) from asientos_contables;
-\echo '--- 7. vendedor se hace admin (0 filas)'
-update usuarios set rol='admin' where id='a0000000-0000-4000-8000-000000000004';
-select rol from usuarios where id='a0000000-0000-4000-8000-000000000004';
--- 8. admin anula
-select pg_temp.como('a0000000-0000-4000-8000-000000000001');
-\echo '--- 8. admin modifica total (debe fallar)'
-update facturas set total_usd = 1;
-\echo '--- 9. admin anula: stock vuelve'
-update facturas set estado='anulada', motivo_anulacion='prueba';
-select 'stock AUD-001 =', stock from productos where sku='AUD-001';
-select tipo, cantidad, stock_resultante from movimientos_inventario where producto_id=(select id from productos where sku='AUD-001') order by fecha;
-\echo '--- 10. asiento descuadrado (debe fallar)'
+\set ON_ERROR_ROLLBACK on
+\pset footer off
+begin;
+create function pg_temp.como(p_email text) returns void language sql as $$
+  select set_config('request.jwt.claims',
+           json_build_object('sub', (select id from public.usuarios where email = p_email), 'role', 'authenticated')::text, true),
+         set_config('role', 'authenticated', true) $$;
+create function pg_temp.cuenta(p_codigo text) returns uuid language sql as $$
+  select id from public.plan_cuentas where codigo = p_codigo $$;
+
+\echo '=== 1. Vendedor: no puede insertar facturas sin el RPC (debe fallar)'
+select pg_temp.como('vendedor@arluc.test');
+insert into facturas (numero_factura, vendedor_id, tasa_id, total_usd, total_bs)
+values ('X-1', auth.uid(), (select id from tasas_cambio limit 1), 1, 1);
+\echo '=== 2. Vendedor: no puede cambiar condiciones de crédito (debe fallar)'
+update clientes set linea_credito = 99999 where documento_identidad = 'V-19842516';
+\echo '=== 3. Vendedor: no puede anular facturas ni hacerse admin (0 filas afectadas)'
+update facturas set estado = 'anulada' where estado = 'emitida';
+update usuarios set rol = 'admin' where email = 'vendedor@arluc.test';
+select rol as rol_vendedor from usuarios where email = 'vendedor@arluc.test';
+\echo '=== 4. Vendedor: no ve la contabilidad (0)'
+select count(*) as asientos_visibles from asientos_contables;
+
+\echo '=== 5. Admin: una factura emitida no se edita (debe fallar)'
+select pg_temp.como('admin@arluc.test');
+update facturas set total_usd = 1 where estado = 'emitida';
+\echo '=== 6. Admin: las facturas no se eliminan (0 filas, sin política de borrado)'
+delete from facturas;
+
+\echo '=== 7. Contador: asiento descuadrado y cuenta de agrupación (deben fallar)'
+select pg_temp.como('contador@arluc.test');
 select crear_asiento(current_date, 'x', 'Manual', jsonb_build_array(
-  jsonb_build_object('cuenta_id',(select id from plan_cuentas where codigo='1.1.01.02'),'debe',10),
-  jsonb_build_object('cuenta_id',(select id from plan_cuentas where codigo='3.1.01.01'),'haber',9)));
-\echo '--- 11. cuenta padre (debe fallar)'
+  jsonb_build_object('cuenta_id', pg_temp.cuenta('1.1.01.02'), 'debe', 10),
+  jsonb_build_object('cuenta_id', pg_temp.cuenta('3.1.01.01'), 'haber', 9)));
 select crear_asiento(current_date, 'x', 'Manual', jsonb_build_array(
-  jsonb_build_object('cuenta_id',(select id from plan_cuentas where codigo='1.1.01'),'debe',10),
-  jsonb_build_object('cuenta_id',(select id from plan_cuentas where codigo='3.1.01.01'),'haber',10)));
-\echo '--- 12. asiento ok + anulación'
-select crear_asiento(current_date, 'Gasto de alquiler', 'Gastos', jsonb_build_array(
-  jsonb_build_object('cuenta_id',(select id from plan_cuentas where codigo='6.1.02.01'),'debe',333.33),
-  jsonb_build_object('cuenta_id',(select id from plan_cuentas where codigo='1.1.01.04'),'haber',333.33)));
-select anular_asiento((select id from asientos_contables where glosa='Gasto de alquiler'), 'error de prueba');
-select numero, estado, modulo, total_debe_ves = total_haber_ves as cuadra_bs from asientos_contables order by numero;
-\echo '--- 13. borrar/editar asiento (debe fallar)'
-update asientos_contables set glosa='hack';
-delete from lineas_asiento;
-\echo '--- 14. saldos'
-select codigo, saldo from saldos_cuentas() ;
-\echo '--- 15. anon llama RPC'
-reset role; set role anon; select generar_numero_factura();
+  jsonb_build_object('cuenta_id', pg_temp.cuenta('1.1.01'), 'debe', 10),
+  jsonb_build_object('cuenta_id', pg_temp.cuenta('3.1.01.01'), 'haber', 10)));
+
+\echo '=== 8. Contador: asiento manual válido y su anulación con contra-asiento'
+select crear_asiento(current_date, 'Prueba de gasto', 'Gastos', jsonb_build_array(
+  jsonb_build_object('cuenta_id', pg_temp.cuenta('6.1.02.04'), 'debe', 33.33),
+  jsonb_build_object('cuenta_id', pg_temp.cuenta('1.1.01.04'), 'haber', 33.33))) as asiento \gset
+select anular_asiento(:'asiento', 'Prueba de anulación') as reverso \gset
+select numero, modulo, estado, total_debe, total_debe_ves = total_haber_ves as cuadra_bs
+  from asientos_contables where id in (:'asiento', :'reverso') order by numero;
+
+\echo '=== 9. Contador: los asientos y sus líneas no se editan ni borran (0 filas)'
+update asientos_contables set glosa = 'hack' where id = :'asiento';
+delete from lineas_asiento where asiento_id = :'asiento';
+select glosa from asientos_contables where id = :'asiento';
+
+\echo '=== 10. Sin sesión (anon): no puede invocar funciones (debe fallar)'
+reset role;
+set local role anon;
+select emitir_factura(null, '[]', '[]');
+
+rollback;

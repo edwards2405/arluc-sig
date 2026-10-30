@@ -24,7 +24,7 @@ export default function CxCAbonoModal({
   const saldoActualUSD = cuenta.saldoTotalUSD;
   const saldoActualBs = tasaValor > 0 ? saldoActualUSD * tasaValor : 0;
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     const monto = parseFloat(form.monto_usd);
     if (isNaN(monto) || monto <= 0) {
@@ -38,10 +38,8 @@ export default function CxCAbonoModal({
 
     setLoading(true);
     try {
-      const montoBs = tasaValor > 0 ? parseFloat((monto * tasaValor).toFixed(2)) : 0;
-      onRegistrarAbono(cuenta.id, {
+      await onRegistrarAbono(cuenta.id, {
         monto_usd: monto,
-        monto_bs: montoBs,
         metodo: form.metodo,
         notas: form.notas.trim(),
       });
@@ -233,12 +231,19 @@ export default function CxCAbonoModal({
                       <div style={{ color: 'var(--text-secondary)', fontSize: '0.72rem' }}>
                         {formatFecha(a.fecha, true)} • {a.metodo?.toUpperCase()} {a.notas ? `(${a.notas})` : ''}
                       </div>
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>
+                        Capital {formatUSD(a.aplicado_capital_usd)}
+                        {a.aplicado_recargo_usd > 0 && ` · Recargo ${formatUSD(a.aplicado_recargo_usd)}`}
+                        {a.igtf_usd > 0 && ` · IGTF ${formatUSD(a.igtf_usd)}`}
+                        {a.diferencial_bs !== 0 &&
+                          ` · Dif. cambiario ${a.diferencial_bs > 0 ? '+' : ''}${a.diferencial_bs.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs`}
+                      </div>
                     </div>
                     <button
                       type="button"
                       className="btn btn--ghost btn--xs text-danger"
                       onClick={() => onEliminarAbono(cuenta.id, a.id)}
-                      title="Eliminar este abono"
+                      title="Anular este abono (requiere admin o gerente)"
                     >
                       <HiOutlineTrash />
                     </button>

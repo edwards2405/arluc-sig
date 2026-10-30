@@ -1,261 +1,177 @@
 /**
- * Servicio y utilidades para Cuentas por Cobrar a Clientes.
- * 
- * Gestiona:
- * - Detección de cuentas de crédito o financiamiento por cobrar por cliente y factura.
- * - Cálculo de días transcurridos desde la emisión de la factura (salida de tienda).
- * - Configuración y aplicación de porcentaje de recargo o interés por mora después de X días.
- * - Registro de abonos / pagos parciales o totales de la deuda.
- * - Generación de mensajes para cobranza directa por WhatsApp.
+ * Servicio de Cuentas por Cobrar a Clientes.
+ *
+ * Toda la información vive en la base de datos:
+ * - Cartera, antigüedad, recargo por mora y saldo: vista v_cuentas_por_cobrar.
+ * - Abonos: tabla abonos_cxc (RPC registrar_abono / anular_abono, con asiento
+ *   contable, IGTF y diferencial cambiario calculados en el servidor).
+ * - Política de crédito y mora: configuracion_empresa.
  */
 
-import abonosSeed from '../data/cxc_abonos_seed.json';
+import { supabase } from '../lib/supabase';
 
-const STORAGE_KEY_CONFIG = 'arluc_cxc_config';
-const STORAGE_KEY_ABONOS = 'arluc_cxc_abonos';
+const PAGE_SIZE = 1000;
 
 export const DEFAULT_CXC_CONFIG = {
-  diasGracia: 15,          // Días a partir de los cuales se aplica el recargo
-  porcentajeRecargo: 5,    // Porcentaje de recargo (%) a sumar
-  aplicarRecargoAutomatico: true, // Si se calcula sugerido automáticamente
+  diasGracia: 15,
+  porcentajeRecargo: 5,
+  aplicarRecargoAutomatico: true,
 };
 
-const STORAGE_KEY_CLIENTES_CREDITO = 'arluc_clientes_credito_config';
-
 /**
- * Obtiene el mapa local de configuración de crédito de clientes:
- * { [clienteId]: { credito_activo: boolean, linea_credito: number, moneda_credito: string } }
+ * Obtiene la política de crédito y mora de la empresa.
  */
-export function getClientesCreditoMap() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_CLIENTES_CREDITO);
-    if (raw) return JSON.parse(raw);
-  } catch (e) {
-    console.error('Error al leer configuración local de crédito de clientes:', e);
-  }
-  return {};
-}
-
-/**
- * Guarda o actualiza la configuración de crédito de un cliente
- */
-export function saveClienteCreditoLocal(clienteId, { linea_credito, credito_activo, moneda_credito }) {
-  try {
-    const map = getClientesCreditoMap();
-    map[clienteId] = {
-      linea_credito: parseFloat(linea_credito) || 0,
-      credito_activo: !!credito_activo,
-      moneda_credito: moneda_credito || 'usd',
-    };
-    localStorage.setItem(STORAGE_KEY_CLIENTES_CREDITO, JSON.stringify(map));
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('arluc_clientes_credito_updated', { detail: map }));
-    }
-    return map[clienteId];
-  } catch (e) {
-    console.error('Error al guardar crédito local del cliente:', e);
-  }
-}
-
-/**
- * Enriquece un cliente con los datos de crédito (si existen en BD o en almacenamiento local)
- */
-export function mergeClienteCredito(cliente) {
-  if (!cliente) return cliente;
-  const map = getClientesCreditoMap();
-  const local = map[cliente.id] || {};
+export async function fetchCxCConfig() {
+  const { data, error } = await supabase
+    .from('configuracion_empresa')
+    .select('dias_credito, porcentaje_recargo_mora, aplicar_recargo_mora')
+    .eq('id', 'default')
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return DEFAULT_CXC_CONFIG;
   return {
-    ...cliente,
-    linea_credito: cliente.linea_credito !== undefined ? cliente.linea_credito : (local.linea_credito ?? 0),
-    credito_activo: cliente.credito_activo !== undefined ? cliente.credito_activo : (local.credito_activo ?? false),
-    moneda_credito: cliente.moneda_credito || local.moneda_credito || 'usd',
+    diasGracia: data.dias_credito,
+    porcentajeRecargo: Number(data.porcentaje_recargo_mora),
+    aplicarRecargoAutomatico: data.aplicar_recargo_mora,
   };
 }
 
 /**
- * Obtiene la configuración de recargos de cuentas por cobrar
+ * Guarda la política de crédito y mora (aplica a créditos nuevos el plazo;
+ * el porcentaje se usa al fijar el recargo de las cuentas vencidas).
  */
-export function getCxCConfig() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_CONFIG);
-    if (raw) {
-      return { ...DEFAULT_CXC_CONFIG, ...JSON.parse(raw) };
-    }
-  } catch (e) {
-    console.error('Error al leer configuración de CxC:', e);
-  }
-  return DEFAULT_CXC_CONFIG;
+export async function saveCxCConfig(cfg) {
+  const { error } = await supabase
+    .from('configuracion_empresa')
+    .update({
+      dias_credito: parseInt(cfg.diasGracia, 10),
+      porcentaje_recargo_mora: parseFloat(cfg.porcentajeRecargo),
+      aplicar_recargo_mora: !!cfg.aplicarRecargoAutomatico,
+    })
+    .eq('id', 'default');
+  if (error) throw error;
+  return fetchCxCConfig();
 }
 
-/**
- * Guarda la configuración de recargos de cuentas por cobrar
- */
-export function saveCxCConfig(cfg) {
-  try {
-    const data = { ...DEFAULT_CXC_CONFIG, ...cfg };
-    localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(data));
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('arluc_cxc_config_updated', { detail: data }));
-    }
-    return data;
-  } catch (e) {
-    console.error('Error al guardar configuración de CxC:', e);
-    return DEFAULT_CXC_CONFIG;
+async function cargarPaginado(crearConsulta) {
+  const filas = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await crearConsulta().range(offset, offset + PAGE_SIZE - 1);
+    if (error) throw error;
+    filas.push(...(data || []));
+    if (!data || data.length < PAGE_SIZE) break;
   }
+  return filas;
 }
 
-/**
- * Obtiene todos los abonos registrados (indexados por clave facturaId)
- * Estructura: { [facturaId]: [ { id, fecha, monto_usd, monto_bs, metodo, notas } ] }
- */
-export function getAbonosCxC() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_ABONOS);
-    if (raw) return JSON.parse(raw);
-    // Si no hay datos en localStorage, inicializar con los casos de estudio generados
-    if (abonosSeed && Object.keys(abonosSeed).length > 0) {
-      localStorage.setItem(STORAGE_KEY_ABONOS, JSON.stringify(abonosSeed));
-      return abonosSeed;
-    }
-  } catch (e) {
-    console.error('Error al leer abonos de CxC:', e);
-  }
-  return abonosSeed || {};
-}
-
-/**
- * Guarda un nuevo abono para una factura dada
- */
-export function registrarAbonoCxC(facturaId, abono) {
-  try {
-    const todos = getAbonosCxC();
-    const listaActual = todos[facturaId] || [];
-    const nuevo = {
-      id: 'abono_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-      fecha: new Date().toISOString(),
-      ...abono,
-    };
-    todos[facturaId] = [...listaActual, nuevo];
-    localStorage.setItem(STORAGE_KEY_ABONOS, JSON.stringify(todos));
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('arluc_cxc_abonos_updated', { detail: todos }));
-    }
-    return nuevo;
-  } catch (e) {
-    console.error('Error al registrar abono en CxC:', e);
-    throw e;
-  }
-}
-
-/**
- * Elimina un abono registrado
- */
-export function eliminarAbonoCxC(facturaId, abonoId) {
-  try {
-    const todos = getAbonosCxC();
-    if (todos[facturaId]) {
-      todos[facturaId] = todos[facturaId].filter((a) => a.id !== abonoId);
-      localStorage.setItem(STORAGE_KEY_ABONOS, JSON.stringify(todos));
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('arluc_cxc_abonos_updated', { detail: todos }));
-      }
-    }
-  } catch (e) {
-    console.error('Error al eliminar abono en CxC:', e);
-  }
-}
-
-/**
- * Calcula de manera contable el recargo por mora y el saldo pendiente.
- * - Si el cliente ya pagó el capital original a tiempo o lo liquidó: NO aplica mora.
- * - La mora solo se calcula sobre el capital pendiente real no pagado.
- */
-export function calcularMoraYSaldo({
-  montoOriginalUSD = 0,
-  totalAbonadoUSD = 0,
-  diasTranscurridos = 0,
-  diasGracia = 15,
-  porcentajeRecargo = 5,
-  aplicarRecargoAutomatico = true,
-  recargoCustom = undefined,
-}) {
-  const original = parseFloat(montoOriginalUSD) || 0;
-  const abonado = parseFloat(totalAbonadoUSD) || 0;
-
-  // Si ya cubrió el capital original, la cuenta está saldada y sin mora
-  if (abonado >= original) {
-    return {
-      recargoUSD: 0,
-      saldoPendienteUSD: 0,
-      capitalPendienteUSD: 0,
-      esSolvente: true,
-      esVencida: false,
-    };
-  }
-
-  const capitalPendienteUSD = Math.max(0, parseFloat((original - abonado).toFixed(2)));
-  const pct = recargoCustom !== undefined ? parseFloat(recargoCustom) || 0 : porcentajeRecargo;
-
-  const tieneMora =
-    (aplicarRecargoAutomatico && diasTranscurridos >= diasGracia && capitalPendienteUSD > 0) ||
-    (recargoCustom !== undefined && capitalPendienteUSD > 0);
-
-  const recargoUSD = tieneMora ? parseFloat(((capitalPendienteUSD * pct) / 100).toFixed(2)) : 0;
-  const saldoPendienteUSD = parseFloat((capitalPendienteUSD + recargoUSD).toFixed(2));
-
+function mapearAbono(a) {
   return {
-    recargoUSD,
-    saldoPendienteUSD,
-    capitalPendienteUSD,
-    esSolvente: saldoPendienteUSD === 0,
-    esVencida: diasTranscurridos >= diasGracia && saldoPendienteUSD > 0,
+    id: a.id,
+    fecha: a.fecha,
+    metodo: a.metodo_id,
+    monto_usd: Number(a.monto_usd),
+    monto_bs: Number(a.monto_bs),
+    igtf_usd: Number(a.igtf_usd),
+    aplicado_recargo_usd: Number(a.aplicado_recargo_usd),
+    aplicado_capital_usd: Number(a.aplicado_capital_usd),
+    diferencial_bs: Number(a.diferencial_bs),
+    referencia: a.referencia,
+    notas: a.notas,
   };
 }
 
 /**
- * Calcula los días transcurridos desde la fecha de salida/emisión
+ * Cartera de crédito directo con sus abonos vigentes y artículos entregados.
+ * Devuelve la estructura que consumen la pantalla de CxC y sus reportes.
  */
-export function calcularDiasTranscurridos(fechaEmision) {
-  if (!fechaEmision) return 0;
-  const emision = new Date(fechaEmision).getTime();
-  const hoy = Date.now();
-  const diffMs = hoy - emision;
-  if (diffMs <= 0) return 0;
-  return Math.floor(diffMs / (1000 * 60 * 60 * 24));
-}
+export async function fetchCuentasPorCobrar() {
+  const filas = await cargarPaginado(() =>
+    supabase
+      .from('v_cuentas_por_cobrar')
+      .select('*')
+      .eq('tipo', 'CREDITO_DIRECTO')
+      .neq('estado', 'ANULADA')
+      .order('fecha_emision', { ascending: false })
+  );
 
-/**
- * Extrae y calcula el monto financiado o a crédito de una factura emitida
- */
-export function extraerCreditoFactura(factura) {
-  if (!factura || factura.estado === 'anulada') {
-    return { tieneCredito: false, montoUSD: 0, montoBs: 0, tipo: null };
+  const abonos = await cargarPaginado(() =>
+    supabase.from('abonos_cxc').select('*').eq('estado', 'VIGENTE').order('fecha')
+  );
+  const abonosPorCuenta = {};
+  for (const a of abonos) {
+    (abonosPorCuenta[a.cxc_id] ||= []).push(mapearAbono(a));
   }
 
-  const metodos = Array.isArray(factura.metodos_pago) ? factura.metodos_pago : [];
-  let creditoTotalUSD = 0;
-  let creditoTotalBs = 0;
-  let tipoCredito = null;
-
-  for (const m of metodos) {
-    // Solo crédito directo otorgado por la tienda a los clientes (NO Cashea)
-    if (m.metodo_id === 'credito' || m.metodo === 'Crédito' || m.metodo === 'credito') {
-      const u = parseFloat(m.monto_usd || 0);
-      const b = parseFloat(m.monto_bs || 0);
-      if (u > 0 || b > 0) {
-        creditoTotalUSD += u;
-        creditoTotalBs += b;
-        tipoCredito = 'directo';
-      }
+  // Artículos entregados, por lotes de facturas para no exceder el largo de la URL.
+  const facturaIds = [...new Set(filas.map((f) => f.factura_id))];
+  const detallesPorFactura = {};
+  for (let i = 0; i < facturaIds.length; i += 150) {
+    const { data, error } = await supabase
+      .from('detalles_factura')
+      .select('id, factura_id, producto_nombre, cantidad, precio_unitario_usd, subtotal_usd')
+      .in('factura_id', facturaIds.slice(i, i + 150));
+    if (error) throw error;
+    for (const d of data || []) {
+      (detallesPorFactura[d.factura_id] ||= []).push(d);
     }
   }
 
-  return {
-    tieneCredito: creditoTotalUSD > 0,
-    montoUSD: parseFloat(creditoTotalUSD.toFixed(2)),
-    montoBs: parseFloat(creditoTotalBs.toFixed(2)),
-    tipo: tipoCredito,
-  };
+  return filas.map((c) => ({
+    id: c.id,
+    factura_id: c.factura_id,
+    numero_factura: c.numero_factura,
+    fecha_emision: c.fecha_emision,
+    fecha_vencimiento: c.fecha_vencimiento,
+    cliente: {
+      id: c.cliente_id,
+      nombre: c.cliente_nombre,
+      documento_identidad: c.documento_identidad,
+      telefono: c.telefono,
+      email: c.email,
+      direccion: c.direccion,
+    },
+    detalles_factura: detallesPorFactura[c.factura_id] || [],
+    totalFacturaUSD: Number(c.total_factura_usd),
+    tipoCredito: 'directo',
+    montoOriginalUSD: Number(c.monto_usd),
+    montoOriginalBs: Number((Number(c.monto_usd) * Number(c.tasa_origen)).toFixed(2)),
+    tasaOrigen: Number(c.tasa_origen),
+    diasTranscurridos: c.dias_transcurridos,
+    diasVencida: c.dias_vencida,
+    capitalPendienteUSD: Number(c.capital_pendiente_usd),
+    recargoUSD: Number(c.recargo_usd),
+    recargoPendienteUSD: Number(c.recargo_pendiente_usd),
+    abonos: abonosPorCuenta[c.id] || [],
+    totalAbonadoUSD: Number(c.total_abonado_usd),
+    saldoTotalUSD: Number(c.saldo_total_usd),
+    esSolvente: c.estado === 'PAGADA',
+    esVencida: c.vencida,
+    estado: c.estado,
+  }));
+}
+
+/**
+ * Registra un abono. El servidor imputa primero al recargo y luego al capital,
+ * calcula IGTF y diferencial cambiario y genera el asiento contable.
+ */
+export async function registrarAbono(cxcId, { monto_usd, metodo, referencia, notas }) {
+  const { data, error } = await supabase.rpc('registrar_abono', {
+    p_cxc_id: cxcId,
+    p_monto_usd: monto_usd,
+    p_metodo_id: metodo,
+    p_referencia: referencia || null,
+    p_notas: notas || null,
+  });
+  if (error) throw error;
+  return mapearAbono(data);
+}
+
+/**
+ * Anula un abono (solo admin/gerente): restituye el saldo y revierte el asiento.
+ */
+export async function anularAbono(abonoId, motivo) {
+  const { error } = await supabase.rpc('anular_abono', { p_abono_id: abonoId, p_motivo: motivo });
+  if (error) throw error;
 }
 
 /**

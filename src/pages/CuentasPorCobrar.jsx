@@ -1,17 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { getEmpresaConfig } from '../utils/constants';
 import {
-  getCxCConfig,
+  DEFAULT_CXC_CONFIG,
+  fetchCxCConfig,
   saveCxCConfig,
-  getAbonosCxC,
-  registrarAbonoCxC,
-  eliminarAbonoCxC,
-  extraerCreditoFactura,
-  calcularDiasTranscurridos,
-  calcularMoraYSaldo,
+  fetchCuentasPorCobrar,
+  registrarAbono,
+  anularAbono,
 } from '../services/cuentasCobrarService';
 
 import CxCStats from '../components/cxc/CxCStats';
@@ -34,10 +33,9 @@ export default function CuentasPorCobrar() {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [facturas, setFacturas] = useState([]);
+  const [cuentasProcesadas, setCuentasProcesadas] = useState([]);
   const [tasaHoy, setTasaHoy] = useState(null);
-  const [config, setConfig] = useState(getCxCConfig);
-  const [abonosMap, setAbonosMap] = useState(getAbonosCxC);
+  const [config, setConfig] = useState(DEFAULT_CXC_CONFIG);
   const [empresa, setEmpresa] = useState(getEmpresaConfig);
 
   // Filtros
@@ -53,140 +51,36 @@ export default function CuentasPorCobrar() {
 
   useEffect(() => {
     cargarDatos();
-
-    function handleAbonosUpdated(e) {
-      setAbonosMap(e.detail || getAbonosCxC());
-    }
-    function handleConfigUpdated(e) {
-      setConfig(e.detail || getCxCConfig());
-    }
-    window.addEventListener('arluc_cxc_abonos_updated', handleAbonosUpdated);
-    window.addEventListener('arluc_cxc_config_updated', handleConfigUpdated);
-
-    return () => {
-      window.removeEventListener('arluc_cxc_abonos_updated', handleAbonosUpdated);
-      window.removeEventListener('arluc_cxc_config_updated', handleConfigUpdated);
-    };
   }, []);
 
   async function cargarDatos() {
     setLoading(true);
     try {
-      // 1. Cargar facturas con clientes y detalles (con paginación continua por si supera 1000 registros)
-      let facturasTotales = [];
-      const step = 1000;
-      let from = 0;
-      let hasMore = true;
+      // Cartera, mora y saldos calculados en la base de datos
+      const [cuentas, cfg, { data: tasaData }] = await Promise.all([
+        fetchCuentasPorCobrar(),
+        fetchCxCConfig(),
+        supabase
+          .from('tasas_cambio')
+          .select('*')
+          .order('fecha_registro', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
 
-      while (hasMore) {
-        const { data: factData, error: fErr } = await supabase
-          .from('facturas')
-          .select(`
-            id,
-            numero_factura,
-            cliente_id,
-            vendedor_id,
-            tasa_id,
-            total_usd,
-            total_bs,
-            metodos_pago,
-            estado,
-            fecha_emision,
-            detalles_factura (
-              id,
-              producto_nombre,
-              cantidad,
-              precio_unitario_usd,
-              subtotal_usd
-            ),
-            clientes (
-              id,
-              nombre,
-              documento_identidad,
-              telefono,
-              email,
-              direccion
-            )
-          `)
-          .eq('estado', 'emitida')
-          .order('fecha_emision', { ascending: false })
-          .range(from, from + step - 1);
-
-        if (fErr) throw fErr;
-        if (factData && factData.length > 0) {
-          facturasTotales = facturasTotales.concat(factData);
-          from += step;
-          if (factData.length < step) hasMore = false;
-        } else {
-          hasMore = false;
-        }
-      }
-
-      setFacturas(facturasTotales);
-
-      // 2. Cargar tasa de cambio más reciente
-      const { data: tasaData } = await supabase
-        .from('tasas_cambio')
-        .select('*')
-        .order('fecha_registro', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
+      setCuentasProcesadas(cuentas);
+      setConfig(cfg);
       if (tasaData) setTasaHoy(tasaData);
       setEmpresa(getEmpresaConfig());
+      return cuentas;
     } catch (e) {
       console.error('Error cargando cuentas por cobrar:', e);
+      toast.error('Error cargando cuentas por cobrar: ' + e.message);
+      return [];
     } finally {
       setLoading(false);
     }
   }
-
-  // Procesar facturas y estructurar cuentas por cobrar
-  const cuentasProcesadas = useMemo(() => {
-    const res = [];
-
-    for (const f of facturas) {
-      const creditoInfo = extraerCreditoFactura(f);
-      if (!creditoInfo.tieneCredito) continue;
-
-      const dias = calcularDiasTranscurridos(f.fecha_emision);
-      const abonos = abonosMap[f.id] || [];
-      const totalAbonado = abonos.reduce((sum, a) => sum + (parseFloat(a.monto_usd) || 0), 0);
-
-      // Cálculo de mora y saldo con lógica contable precisa
-      const calculo = calcularMoraYSaldo({
-        montoOriginalUSD: creditoInfo.montoUSD,
-        totalAbonadoUSD: totalAbonado,
-        diasTranscurridos: dias,
-        diasGracia: config.diasGracia,
-        porcentajeRecargo: config.porcentajeRecargo,
-        aplicarRecargoAutomatico: config.aplicarRecargoAutomatico,
-      });
-
-      res.push({
-        id: f.id,
-        numero_factura: f.numero_factura,
-        fecha_emision: f.fecha_emision,
-        cliente: f.clientes,
-        detalles_factura: f.detalles_factura || [],
-        totalFacturaUSD: parseFloat(f.total_usd || 0),
-        totalFacturaBs: parseFloat(f.total_bs || 0),
-        tipoCredito: creditoInfo.tipo,
-        montoOriginalUSD: creditoInfo.montoUSD,
-        montoOriginalBs: creditoInfo.montoBs,
-        diasTranscurridos: dias,
-        recargoUSD: calculo.recargoUSD,
-        porcentajeAplicado: config.porcentajeRecargo,
-        abonos,
-        totalAbonadoUSD: parseFloat(totalAbonado.toFixed(2)),
-        saldoTotalUSD: calculo.saldoPendienteUSD,
-        esSolvente: calculo.esSolvente,
-        esVencida: calculo.esVencida,
-      });
-    }
-
-    return res;
-  }, [facturas, abonosMap, config]);
 
   // Filtrado
   const cuentasFiltradas = useMemo(() => {
@@ -257,59 +151,39 @@ export default function CuentasPorCobrar() {
     setCurrentPage(1);
   }, [search, filtroEstado]);
 
-  function handleSaveConfig(newConfig) {
-    const saved = saveCxCConfig(newConfig);
-    setConfig(saved);
-  }
-
-  function handleRegistrarAbono(facturaId, abono) {
-    registrarAbonoCxC(facturaId, abono);
-    setAbonosMap(getAbonosCxC());
-    // Refrescar cuenta seleccionada si está en modal
-    if (cuentaParaAbonar && cuentaParaAbonar.id === facturaId) {
-      const updatedAbonos = (abonosMap[facturaId] || []).concat(abono);
-      const totalAbonado = updatedAbonos.reduce((s, a) => s + (parseFloat(a.monto_usd) || 0), 0);
-      const calc = calcularMoraYSaldo({
-        montoOriginalUSD: cuentaParaAbonar.montoOriginalUSD,
-        totalAbonadoUSD: totalAbonado,
-        diasTranscurridos: cuentaParaAbonar.diasTranscurridos,
-        diasGracia: config.diasGracia,
-        porcentajeRecargo: config.porcentajeRecargo,
-        aplicarRecargoAutomatico: config.aplicarRecargoAutomatico,
-      });
-
-      setCuentaParaAbonar((prev) => ({
-        ...prev,
-        abonos: updatedAbonos,
-        totalAbonadoUSD: totalAbonado,
-        recargoUSD: calc.recargoUSD,
-        saldoTotalUSD: calc.saldoPendienteUSD,
-      }));
+  async function handleSaveConfig(newConfig) {
+    try {
+      setConfig(await saveCxCConfig(newConfig));
+      toast.success('Política de crédito y mora actualizada');
+      await cargarDatos();
+    } catch (e) {
+      toast.error('Error al guardar la configuración: ' + e.message);
     }
   }
 
-  function handleEliminarAbono(facturaId, abonoId) {
-    eliminarAbonoCxC(facturaId, abonoId);
-    setAbonosMap(getAbonosCxC());
-    if (cuentaParaAbonar && cuentaParaAbonar.id === facturaId) {
-      const updatedAbonos = (cuentaParaAbonar.abonos || []).filter((a) => a.id !== abonoId);
-      const totalAbonado = updatedAbonos.reduce((s, a) => s + (parseFloat(a.monto_usd) || 0), 0);
-      const calc = calcularMoraYSaldo({
-        montoOriginalUSD: cuentaParaAbonar.montoOriginalUSD,
-        totalAbonadoUSD: totalAbonado,
-        diasTranscurridos: cuentaParaAbonar.diasTranscurridos,
-        diasGracia: config.diasGracia,
-        porcentajeRecargo: config.porcentajeRecargo,
-        aplicarRecargoAutomatico: config.aplicarRecargoAutomatico,
-      });
+  async function refrescarCuentaAbierta(cxcId) {
+    const cuentas = await cargarDatos();
+    const cuenta = cuentas.find((c) => c.id === cxcId);
+    setCuentaParaAbonar(cuenta ? { ...cuenta, porcentajeAplicado: config.porcentajeRecargo } : null);
+  }
 
-      setCuentaParaAbonar((prev) => ({
-        ...prev,
-        abonos: updatedAbonos,
-        totalAbonadoUSD: totalAbonado,
-        recargoUSD: calc.recargoUSD,
-        saldoTotalUSD: calc.saldoPendienteUSD,
-      }));
+  async function handleRegistrarAbono(cxcId, abono) {
+    await registrarAbono(cxcId, abono);
+    await refrescarCuentaAbierta(cxcId);
+  }
+
+  async function handleEliminarAbono(cxcId, abonoId) {
+    const motivo = window.prompt('Motivo de la anulación del abono:');
+    if (!motivo?.trim()) {
+      toast.error('Debe indicar el motivo de la anulación');
+      return;
+    }
+    try {
+      await anularAbono(abonoId, motivo.trim());
+      toast.success('Abono anulado y asiento revertido');
+      await refrescarCuentaAbierta(cxcId);
+    } catch (e) {
+      toast.error(e.message);
     }
   }
 

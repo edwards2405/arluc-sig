@@ -172,77 +172,54 @@ export async function actualizarCuenta(cuentaId, { nombre, tipo, naturaleza, es_
 }
 
 /**
- * Obtiene el balance de comprobación: saldos acumulados de todas las cuentas operativas.
+ * Saldos por cuenta calculados en PostgreSQL (sin límite de filas).
+ * Con fechaDesde vacío se obtiene el saldo acumulado al corte.
+ */
+async function fetchSaldos(fechaDesde, fechaHasta) {
+  const { data, error } = await supabase.rpc('saldos_cuentas', {
+    p_desde: fechaDesde || null,
+    p_hasta: fechaHasta || null,
+  });
+  if (error) throw error;
+  return (data || []).map((c) => ({
+    id: c.cuenta_id,
+    codigo: c.codigo,
+    nombre: c.nombre,
+    tipo: c.tipo,
+    naturaleza: c.naturaleza,
+    debe: Number(c.debe),
+    haber: Number(c.haber),
+    debeVes: Number(c.debe_ves),
+    haberVes: Number(c.haber_ves),
+    saldo: Number(c.saldo),
+    saldoVes: Number(c.saldo_ves),
+  }));
+}
+
+const centimos = (n) => Math.round(Number(n || 0) * 100);
+
+/**
+ * Balance de comprobación: sumas y saldos de las cuentas con movimiento.
+ * El saldo deudor/acreedor se determina por el lado que predomina
+ * (Debe > Haber = deudor), independientemente de la naturaleza de la cuenta.
  */
 export async function fetchBalanceComprobacion({ fechaDesde, fechaHasta } = {}) {
-  const cuentas = await fetchCuentasOperativas();
-
-  // Traer todas las líneas con sus asientos para filtrar por fecha
-  let query = supabase
-    .from('lineas_asiento')
-    .select(`
-      id, cuenta_id, debe, haber, debe_ves, haber_ves,
-      asientos_contables ( fecha )
-    `);
-
-  const { data: lineas, error } = await query;
-  if (error) throw error;
-
-  // Filtrar por rango de fechas si se proporcionó
-  const lineasFiltradas = (lineas || []).filter((l) => {
-    const fecha = l.asientos_contables?.fecha;
-    if (!fecha) return false;
-    if (fechaDesde && fecha < fechaDesde) return false;
-    if (fechaHasta && fecha > fechaHasta) return false;
-    return true;
-  });
-
-  // Agrupar por cuenta
-  const saldosPorCuenta = {};
-  for (const linea of lineasFiltradas) {
-    if (!saldosPorCuenta[linea.cuenta_id]) {
-      saldosPorCuenta[linea.cuenta_id] = {
-        totalDebe: 0,
-        totalHaber: 0,
-        totalDebeVes: 0,
-        totalHaberVes: 0,
-      };
-    }
-    const s = saldosPorCuenta[linea.cuenta_id];
-    s.totalDebe += Math.round(Number(linea.debe || 0) * 100);
-    s.totalHaber += Math.round(Number(linea.haber || 0) * 100);
-    s.totalDebeVes += Math.round(Number(linea.debe_ves || 0) * 100);
-    s.totalHaberVes += Math.round(Number(linea.haber_ves || 0) * 100);
-  }
-
-  return cuentas.map((cuenta) => {
-    const s = saldosPorCuenta[cuenta.id] || {
-      totalDebe: 0, totalHaber: 0, totalDebeVes: 0, totalHaberVes: 0,
-    };
-    const esDeudora = cuenta.naturaleza?.toUpperCase() === 'DEUDORA'
-      || ['ACTIVO', 'COSTO', 'GASTO'].includes(cuenta.tipo?.toUpperCase());
-
-    const saldoCentimos = esDeudora
-      ? s.totalDebe - s.totalHaber
-      : s.totalHaber - s.totalDebe;
-    const saldoVesCentimos = esDeudora
-      ? s.totalDebeVes - s.totalHaberVes
-      : s.totalHaberVes - s.totalDebeVes;
-
+  const cuentas = await fetchSaldos(fechaDesde, fechaHasta);
+  return cuentas.map((c) => {
+    const neto = centimos(c.debe) - centimos(c.haber);
+    const netoVes = centimos(c.debeVes) - centimos(c.haberVes);
     return {
-      ...cuenta,
-      totalDebe: s.totalDebe / 100,
-      totalHaber: s.totalHaber / 100,
-      totalDebeVes: s.totalDebeVes / 100,
-      totalHaberVes: s.totalHaberVes / 100,
-      saldo: saldoCentimos / 100,
-      saldoVes: saldoVesCentimos / 100,
-      saldoDeudor: saldoCentimos > 0 ? saldoCentimos / 100 : 0,
-      saldoAcreedor: saldoCentimos < 0 ? Math.abs(saldoCentimos) / 100 : 0,
-      saldoDeudorVes: saldoVesCentimos > 0 ? saldoVesCentimos / 100 : 0,
-      saldoAcreedorVes: saldoVesCentimos < 0 ? Math.abs(saldoVesCentimos) / 100 : 0,
+      ...c,
+      totalDebe: c.debe,
+      totalHaber: c.haber,
+      totalDebeVes: c.debeVes,
+      totalHaberVes: c.haberVes,
+      saldoDeudor: neto > 0 ? neto / 100 : 0,
+      saldoAcreedor: neto < 0 ? -neto / 100 : 0,
+      saldoDeudorVes: netoVes > 0 ? netoVes / 100 : 0,
+      saldoAcreedorVes: netoVes < 0 ? -netoVes / 100 : 0,
     };
-  }).filter((c) => c.totalDebe > 0 || c.totalHaber > 0);
+  });
 }
 
 /**
@@ -335,132 +312,66 @@ export async function fetchMovimientosCuenta(cuentaId) {
 }
 
 /**
- * Obtiene los Estados Financieros: Estado de Resultados y Balance General.
+ * Estados Financieros.
+ * - Estado de Resultados: movimientos del período [fechaDesde, fechaHasta].
+ * - Balance General: saldos ACUMULADOS al corte (fechaHasta), sin importar
+ *   fechaDesde. Mientras no exista asiento de cierre, el resultado acumulado
+ *   de ingresos, costos y gastos se presenta como utilidad del ejercicio.
  */
 export async function fetchEstadosFinancieros({ fechaDesde, fechaHasta } = {}) {
-  const cuentas = await fetchCuentasOperativas();
+  const [periodo, acumulado] = await Promise.all([
+    fetchSaldos(fechaDesde, fechaHasta),
+    fetchSaldos(null, fechaHasta),
+  ]);
 
-  const { data: lineas, error } = await supabase
-    .from('lineas_asiento')
-    .select(`
-      id, cuenta_id, debe, haber, debe_ves, haber_ves,
-      asientos_contables ( fecha )
-    `);
-  if (error) throw error;
+  const conCentimos = (c) => ({ ...c, saldoCentimos: centimos(c.saldo), saldoVesCentimos: centimos(c.saldoVes) });
+  const deTipo = (lista, tipo) => lista.filter((c) => c.tipo === tipo).map(conCentimos);
+  const suma = (lista, campo) => lista.reduce((acc, c) => acc + c[campo], 0);
 
-  const lineasFiltradas = (lineas || []).filter((l) => {
-    const fecha = l.asientos_contables?.fecha;
-    if (!fecha) return false;
-    if (fechaDesde && fecha < fechaDesde) return false;
-    if (fechaHasta && fecha > fechaHasta) return false;
-    return true;
-  });
-
-  const saldos = {};
-  for (const l of lineasFiltradas) {
-    if (!saldos[l.cuenta_id]) {
-      saldos[l.cuenta_id] = { debe: 0, haber: 0, debeVes: 0, haberVes: 0 };
+  function resultado(lista) {
+    const ingresos = deTipo(lista, 'INGRESO');
+    const costos = deTipo(lista, 'COSTO');
+    const gastos = deTipo(lista, 'GASTO');
+    const r = { ingresos, costos, gastos };
+    for (const sufijo of ['', 'Ves']) {
+      const campo = `saldo${sufijo}Centimos`;
+      const tIng = suma(ingresos, campo);
+      const tCos = suma(costos, campo);
+      const tGas = suma(gastos, campo);
+      r[`totalIngresos${sufijo}`] = tIng / 100;
+      r[`totalCostos${sufijo}`] = tCos / 100;
+      r[`utilidadBruta${sufijo}`] = (tIng - tCos) / 100;
+      r[`totalGastos${sufijo}`] = tGas / 100;
+      r[`utilidadNeta${sufijo}`] = (tIng - tCos - tGas) / 100;
     }
-    saldos[l.cuenta_id].debe += Math.round(Number(l.debe || 0) * 100);
-    saldos[l.cuenta_id].haber += Math.round(Number(l.haber || 0) * 100);
-    saldos[l.cuenta_id].debeVes += Math.round(Number(l.debe_ves || 0) * 100);
-    saldos[l.cuenta_id].haberVes += Math.round(Number(l.haber_ves || 0) * 100);
+    return r;
   }
 
-  const cuentasConSaldo = cuentas.map(c => {
-    const s = saldos[c.id] || { debe: 0, haber: 0, debeVes: 0, haberVes: 0 };
-    const tipo = (c.tipo || '').toUpperCase();
-    const esDeudora = c.naturaleza?.toUpperCase() === 'DEUDORA' || ['ACTIVO', 'COSTO', 'GASTO'].includes(tipo);
+  const estadoResultados = resultado(periodo);
+  const resultadoAcumulado = resultado(acumulado);
 
-    const saldo = esDeudora ? (s.debe - s.haber) : (s.haber - s.debe);
-    const saldoVes = esDeudora ? (s.debeVes - s.haberVes) : (s.haberVes - s.debeVes);
+  const activos = deTipo(acumulado, 'ACTIVO');
+  const pasivos = deTipo(acumulado, 'PASIVO');
+  const patrimonio = deTipo(acumulado, 'PATRIMONIO');
+  const balanceGeneral = { activos, pasivos, patrimonio };
 
-    return {
-      ...c,
-      debe: s.debe / 100,
-      haber: s.haber / 100,
-      debeVes: s.debeVes / 100,
-      haberVes: s.haberVes / 100,
-      saldo: saldo / 100,
-      saldoVes: saldoVes / 100,
-      saldoCentimos: saldo,
-      saldoVesCentimos: saldoVes,
-    };
-  });
+  for (const sufijo of ['', 'Ves']) {
+    const campo = `saldo${sufijo}Centimos`;
+    const tAct = suma(activos, campo);
+    const tPas = suma(pasivos, campo);
+    const tPatBase = suma(patrimonio, campo);
+    const utilidad = Math.round(resultadoAcumulado[`utilidadNeta${sufijo}`] * 100);
+    balanceGeneral[`totalActivos${sufijo}`] = tAct / 100;
+    balanceGeneral[`totalPasivos${sufijo}`] = tPas / 100;
+    balanceGeneral[`totalPatrimonioBase${sufijo}`] = tPatBase / 100;
+    balanceGeneral[`utilidadEjercicio${sufijo}`] = utilidad / 100;
+    balanceGeneral[`totalPatrimonio${sufijo}`] = (tPatBase + utilidad) / 100;
+    balanceGeneral[`totalPasivoPatrimonio${sufijo}`] = (tPas + tPatBase + utilidad) / 100;
+    if (!sufijo) {
+      balanceGeneral.diferencia = (tAct - tPas - tPatBase - utilidad) / 100;
+      balanceGeneral.cuadrado = Math.abs(tAct - tPas - tPatBase - utilidad) <= 1;
+    }
+  }
 
-  // Estado de Resultados
-  const ingresos = cuentasConSaldo.filter(c => c.tipo?.toUpperCase() === 'INGRESO' && (c.debe !== 0 || c.haber !== 0));
-  const costos = cuentasConSaldo.filter(c => c.tipo?.toUpperCase() === 'COSTO' && (c.debe !== 0 || c.haber !== 0));
-  const gastos = cuentasConSaldo.filter(c => c.tipo?.toUpperCase() === 'GASTO' && (c.debe !== 0 || c.haber !== 0));
-
-  const totalIngresosCent = ingresos.reduce((acc, c) => acc + c.saldoCentimos, 0);
-  const totalCostosCent = costos.reduce((acc, c) => acc + c.saldoCentimos, 0);
-  const utilidadBrutaCent = totalIngresosCent - totalCostosCent;
-
-  const totalGastosCent = gastos.reduce((acc, c) => acc + c.saldoCentimos, 0);
-  const utilidadNetaCent = utilidadBrutaCent - totalGastosCent;
-
-  const totalIngresosVesCent = ingresos.reduce((acc, c) => acc + c.saldoVesCentimos, 0);
-  const totalCostosVesCent = costos.reduce((acc, c) => acc + c.saldoVesCentimos, 0);
-  const utilidadBrutaVesCent = totalIngresosVesCent - totalCostosVesCent;
-
-  const totalGastosVesCent = gastos.reduce((acc, c) => acc + c.saldoVesCentimos, 0);
-  const utilidadNetaVesCent = utilidadBrutaVesCent - totalGastosVesCent;
-
-  // Balance General
-  const activos = cuentasConSaldo.filter(c => c.tipo?.toUpperCase() === 'ACTIVO' && (c.debe !== 0 || c.haber !== 0));
-  const pasivos = cuentasConSaldo.filter(c => c.tipo?.toUpperCase() === 'PASIVO' && (c.debe !== 0 || c.haber !== 0));
-  const patrimonio = cuentasConSaldo.filter(c => c.tipo?.toUpperCase() === 'PATRIMONIO' && (c.debe !== 0 || c.haber !== 0));
-
-  const totalActivosCent = activos.reduce((acc, c) => acc + c.saldoCentimos, 0);
-  const totalPasivosCent = pasivos.reduce((acc, c) => acc + c.saldoCentimos, 0);
-  const totalPatrimonioBaseCent = patrimonio.reduce((acc, c) => acc + c.saldoCentimos, 0);
-  const totalPatrimonioCent = totalPatrimonioBaseCent + utilidadNetaCent;
-
-  const totalActivosVesCent = activos.reduce((acc, c) => acc + c.saldoVesCentimos, 0);
-  const totalPasivosVesCent = pasivos.reduce((acc, c) => acc + c.saldoVesCentimos, 0);
-  const totalPatrimonioBaseVesCent = patrimonio.reduce((acc, c) => acc + c.saldoVesCentimos, 0);
-  const totalPatrimonioVesCent = totalPatrimonioBaseVesCent + utilidadNetaVesCent;
-
-  const totalPasivoPatrimonioCent = totalPasivosCent + totalPatrimonioCent;
-  const totalPasivoPatrimonioVesCent = totalPasivosVesCent + totalPatrimonioVesCent;
-
-  const cuadrado = Math.abs(totalActivosCent - totalPasivoPatrimonioCent) <= 1;
-
-  return {
-    estadoResultados: {
-      ingresos,
-      costos,
-      gastos,
-      totalIngresos: totalIngresosCent / 100,
-      totalCostos: totalCostosCent / 100,
-      utilidadBruta: utilidadBrutaCent / 100,
-      totalGastos: totalGastosCent / 100,
-      utilidadNeta: utilidadNetaCent / 100,
-      totalIngresosVes: totalIngresosVesCent / 100,
-      totalCostosVes: totalCostosVesCent / 100,
-      utilidadBrutaVes: utilidadBrutaVesCent / 100,
-      totalGastosVes: totalGastosVesCent / 100,
-      utilidadNetaVes: utilidadNetaVesCent / 100,
-    },
-    balanceGeneral: {
-      activos,
-      pasivos,
-      patrimonio,
-      totalActivos: totalActivosCent / 100,
-      totalPasivos: totalPasivosCent / 100,
-      totalPatrimonioBase: totalPatrimonioBaseCent / 100,
-      totalPatrimonio: totalPatrimonioCent / 100,
-      utilidadEjercicio: utilidadNetaCent / 100,
-      totalPasivoPatrimonio: totalPasivoPatrimonioCent / 100,
-      totalActivosVes: totalActivosVesCent / 100,
-      totalPasivosVes: totalPasivosVesCent / 100,
-      totalPatrimonioBaseVes: totalPatrimonioBaseVesCent / 100,
-      totalPatrimonioVes: totalPatrimonioVesCent / 100,
-      utilidadEjercicioVes: utilidadNetaVesCent / 100,
-      totalPasivoPatrimonioVes: totalPasivoPatrimonioVesCent / 100,
-      cuadrado,
-      diferencia: (totalActivosCent - totalPasivoPatrimonioCent) / 100,
-    },
-  };
+  return { estadoResultados, balanceGeneral };
 }

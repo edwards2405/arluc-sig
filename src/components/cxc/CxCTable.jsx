@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   HiOutlineCreditCard,
   HiOutlineBanknotes,
@@ -9,7 +9,7 @@ import {
 } from 'react-icons/hi2';
 import { FaWhatsapp, FaPhone } from 'react-icons/fa';
 import { formatUSD, formatBs, formatFecha, getWhatsAppUrl, getPhoneCallUrl } from '../../utils/formatters';
-import { generarMensajeCobroWhatsApp, calcularMoraYSaldo } from '../../services/cuentasCobrarService';
+import { generarMensajeCobroWhatsApp } from '../../services/cuentasCobrarService';
 
 export default function CxCTable({
   cuentas,
@@ -20,14 +20,6 @@ export default function CxCTable({
   onOpenConfig,
   onVerArticulos,
 }) {
-  const [recargosPersonalizados, setRecargosPersonalizados] = useState({});
-
-  function handleCustomPorcentajeChange(cuentaId, val) {
-    setRecargosPersonalizados((prev) => ({
-      ...prev,
-      [cuentaId]: val,
-    }));
-  }
 
   return (
     <div className="card">
@@ -69,28 +61,14 @@ export default function CxCTable({
               cuentas.map((c) => {
                 const cliente = c.cliente;
                 const dias = c.diasTranscurridos;
-                const diasGracia = config.diasGracia;
 
-                // Porcentaje efectivo (personalizado o de configuración)
-                const pctCustom = recargosPersonalizados[c.id];
-                const pctEfectivo = pctCustom !== undefined ? parseFloat(pctCustom) || 0 : c.porcentajeAplicado;
-
-                // Cálculo de mora y saldo con lógica contable precisa
-                const calculo = calcularMoraYSaldo({
-                  montoOriginalUSD: c.montoOriginalUSD,
-                  totalAbonadoUSD: c.totalAbonadoUSD,
-                  diasTranscurridos: dias,
-                  diasGracia: diasGracia,
-                  porcentajeRecargo: c.porcentajeAplicado,
-                  aplicarRecargoAutomatico: config.aplicarRecargoAutomatico,
-                  recargoCustom: pctCustom,
-                });
-
-                const recargoCalculadoUSD = calculo.recargoUSD;
-                const saldoCalculadoUSD = calculo.saldoPendienteUSD;
+                // Mora, saldo y estado calculados por la base de datos
+                const pctEfectivo = config.porcentajeRecargo;
+                const recargoCalculadoUSD = c.recargoUSD;
+                const saldoCalculadoUSD = c.saldoTotalUSD;
                 const saldoCalculadoBs = tasaValor > 0 ? parseFloat((saldoCalculadoUSD * tasaValor).toFixed(2)) : 0;
-                const esVencida = calculo.esVencida;
-                const esSolvente = calculo.esSolvente;
+                const esVencida = c.esVencida;
+                const esSolvente = c.esSolvente;
 
                 const msgWhatsAppEncoded = cliente?.telefono
                   ? generarMensajeCobroWhatsApp({
@@ -190,24 +168,7 @@ export default function CxCTable({
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.5"
-                            value={pctCustom !== undefined ? pctCustom : config.porcentajeRecargo}
-                            onChange={(e) => handleCustomPorcentajeChange(c.id, e.target.value)}
-                            title="Ajustar porcentaje de recargo específico para esta cuenta"
-                            style={{
-                              width: '56px',
-                              padding: '2px 4px',
-                              fontSize: '0.75rem',
-                              textAlign: 'center',
-                              borderRadius: '4px',
-                              border: '1px solid var(--border)',
-                              background: 'var(--bg-elevated)',
-                              color: 'var(--text-primary)',
-                            }}
-                          />
+                          <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>{pctEfectivo}</span>
                           <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>%</span>
                         </div>
                         {recargoCalculadoUSD > 0 ? (
@@ -216,7 +177,7 @@ export default function CxCTable({
                           </span>
                         ) : (
                           <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                            {dias < diasGracia ? `Gracia (${diasGracia - dias}d rest.)` : 'Sin recargo'}
+                            {esVencida ? 'Sin recargo' : `Vence ${formatFecha(c.fecha_vencimiento)}`}
                           </span>
                         )}
                       </div>
@@ -256,7 +217,7 @@ export default function CxCTable({
                             fontSize: '0.72rem',
                           }}
                         >
-                          <HiOutlineExclamationTriangle style={{ marginRight: '2px' }} /> Vencida (+{dias}d)
+                          <HiOutlineExclamationTriangle style={{ marginRight: '2px' }} /> Vencida (+{c.diasVencida}d)
                         </span>
                       ) : (
                         <span

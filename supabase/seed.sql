@@ -7,6 +7,7 @@
 --   contador@arluc.test     Contador
 --   vendedor@arluc.test     Vendedor / cajero
 --   almacen@arluc.test      Almacenista
+--   caja2@arluc.test        Vendedor / cajero (segunda caja)
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -18,7 +19,8 @@ with nuevos (id, email, nombre, rol) as (
     ('a0000000-0000-4000-8000-000000000002'::uuid, 'gerente@arluc.test',  'María Fernández',   'gerente'),
     ('a0000000-0000-4000-8000-000000000003'::uuid, 'contador@arluc.test', 'Luis Contreras',    'contador'),
     ('a0000000-0000-4000-8000-000000000004'::uuid, 'vendedor@arluc.test', 'Ana Rodríguez',     'vendedor'),
-    ('a0000000-0000-4000-8000-000000000005'::uuid, 'almacen@arluc.test',  'José Ramírez',      'almacenista')
+    ('a0000000-0000-4000-8000-000000000005'::uuid, 'almacen@arluc.test',  'José Ramírez',      'almacenista'),
+    ('a0000000-0000-4000-8000-000000000006'::uuid, 'caja2@arluc.test',    'Daniela Torres',    'vendedor')
 ), ins as (
   insert into auth.users (
     instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -43,7 +45,7 @@ update public.usuarios u
   from (values
     ('admin@arluc.test', 'admin'), ('gerente@arluc.test', 'gerente'),
     ('contador@arluc.test', 'contador'), ('vendedor@arluc.test', 'vendedor'),
-    ('almacen@arluc.test', 'almacenista')
+    ('almacen@arluc.test', 'almacenista'), ('caja2@arluc.test', 'vendedor')
   ) as v(email, rol)
  where u.email = v.email;
 
@@ -143,5 +145,139 @@ begin
                          'descripcion', 'Capital social suscrito y pagado')
     )
   );
+end;
+$$;
+
+-- =============================================================================
+-- 90 días de operación simulada (para reportes, CxC y estados financieros).
+-- Usa las mismas funciones que la aplicación: emitir_factura, registrar_abono,
+-- pagar_cxp, recepción de compras y asientos de gastos.
+-- =============================================================================
+do $$
+declare
+  c_vendedores uuid[] := array['a0000000-0000-4000-8000-000000000004'::uuid, 'a0000000-0000-4000-8000-000000000006'::uuid];
+  c_almacen uuid := 'a0000000-0000-4000-8000-000000000005';
+  v_cuenta jsonb := (select jsonb_object_agg(codigo, id) from public.plan_cuentas);
+  d date;
+  k int;
+  v_ts timestamptz;
+  v_items jsonb;
+  v_base numeric;
+  v_total numeric;
+  v_mitad numeric;
+  v_pagos jsonb;
+  v_cliente uuid;
+  v_r numeric;
+  v_orden uuid;
+  p record;
+  c record;
+begin
+  perform setseed(0.2026);
+
+  for d in select generate_series(current_date - 88, current_date - 1, interval '1 day')::date loop
+    -- 1) Reposición: compra y recepción de lo que está bajo el mínimo.
+    perform set_config('arluc.fecha_operacion', (d + time '09:00')::text, false);
+    for p in select * from public.productos where stock < stock_minimo + 2 loop
+      insert into public.ordenes_compra (numero_orden, proveedor_id, registrado_por, numero_factura_proveedor)
+      values ('OC-' || lpad(interno.siguiente_valor('orden_compra')::text, 6, '0'),
+              (select id from public.proveedores order by random() limit 1), c_almacen,
+              'FP-' || (10000 + floor(random() * 89999))::int)
+      returning id into v_orden;
+      insert into public.detalles_orden_compra (orden_id, producto_id, cantidad, precio_unitario_usd)
+      values (v_orden, p.id, p.stock_minimo * 3 + 5, round(p.costo_usd * (0.97 + random() * 0.08)::numeric, 2));
+      update public.ordenes_compra set estado = 'recibida' where id = v_orden;
+    end loop;
+
+    -- 2) Ventas del día (los domingos no se abre).
+    for k in 1 .. case when extract(dow from d) = 0 then 0 else 2 + floor(random() * 4)::int end loop
+      v_ts := d + time '10:00' + random() * interval '9 hours';
+      select jsonb_agg(jsonb_build_object('producto_id', x.id, 'cantidad', x.cant)),
+             sum(round(x.cant * x.precio_usd, 2))
+        into v_items, v_base
+        from (select pr.id, pr.precio_usd,
+                     least(pr.stock, case when pr.precio_usd < 20 then 1 + floor(random() * 4)::int
+                                          else 1 + floor(random() * 2)::int end) as cant
+                from public.productos pr where pr.stock > 0 order by random() limit 1 + floor(random() * 3)::int) x;
+      v_total := v_base + round(v_base * 0.16, 2);
+      v_mitad := round(v_total / 2, 2);
+      v_cliente := null;
+      v_r := random();
+      v_pagos := case
+        when v_r < 0.28 then jsonb_build_array(jsonb_build_object('metodo_id', 'efectivo_usd', 'monto_usd', v_total))
+        when v_r < 0.50 then jsonb_build_array(jsonb_build_object('metodo_id', 'pago_movil', 'monto_usd', v_total,
+                               'referencia', 'PM-' || floor(random() * 999999)::int))
+        when v_r < 0.62 then jsonb_build_array(jsonb_build_object('metodo_id', 'punto_venta', 'monto_usd', v_total,
+                               'referencia', 'PV-' || floor(random() * 999999)::int))
+        when v_r < 0.71 then jsonb_build_array(jsonb_build_object('metodo_id', 'zelle', 'monto_usd', v_total,
+                               'zelle_titular', 'Cliente Zelle', 'zelle_email', 'pagos@correo.test'))
+        when v_r < 0.80 then jsonb_build_array(
+                               jsonb_build_object('metodo_id', 'pago_movil', 'monto_usd', v_mitad,
+                                                  'referencia', 'PM-' || floor(random() * 999999)::int),
+                               jsonb_build_object('metodo_id', 'efectivo_usd', 'monto_usd', v_total - v_mitad))
+        when v_r < 0.88 then jsonb_build_array(jsonb_build_object('metodo_id', 'cashea', 'monto_usd', round(v_total * 0.4, 2),
+                               'referencia', 'CSH-' || floor(random() * 99999)::int, 'cashea_metodo_inicial', 'punto_venta'))
+        else jsonb_build_array(jsonb_build_object('metodo_id', 'credito', 'monto_usd', v_total)) end;
+      if v_r >= 0.88 then
+        select id into v_cliente from public.clientes where credito_activo order by random() limit 1;
+      elsif random() < 0.35 then
+        select id into v_cliente from public.clientes order by random() limit 1;
+      end if;
+
+      begin
+        perform interno.emitir_factura(c_vendedores[1 + floor(random() * 2)::int], v_cliente, v_items, v_pagos, false, v_ts);
+      exception when others then
+        null; -- p. ej. límite de crédito excedido: la venta no se concreta
+      end;
+    end loop;
+
+    -- 3) Cobranza: algunos clientes abonan sus créditos.
+    for c in select * from public.cuentas_por_cobrar
+              where tipo = 'CREDITO_DIRECTO' and estado = 'PENDIENTE' and fecha_emision <= d - 5 loop
+      if random() < 0.12 then
+        perform interno.registrar_abono(
+          c.id, case when random() < 0.5 then round(c.saldo_usd / 2, 2) else c.saldo_usd end,
+          (array['efectivo_usd', 'pago_movil', 'transferencia'])[1 + floor(random() * 3)::int],
+          null, 'Abono de cliente', d + time '11:30');
+      end if;
+    end loop;
+    -- Cashea liquida lo financiado al vencimiento.
+    for c in select * from public.cuentas_por_cobrar
+              where tipo = 'CASHEA' and estado = 'PENDIENTE' and fecha_vencimiento <= d loop
+      perform interno.registrar_abono(c.id, c.saldo_usd, 'transferencia', 'CASHEA-LIQ', 'Liquidación Cashea', d + time '15:00');
+    end loop;
+
+    -- 4) Pagos a proveedores a partir de los 20 días.
+    for c in select * from public.cuentas_por_pagar where estado = 'PENDIENTE' and fecha_emision <= d - 20 loop
+      if random() < 0.5 then
+        perform interno.pagar_cxp(c.id, c.saldo_usd,
+          (array['transferencia', 'efectivo_usd'])[1 + floor(random() * 2)::int], null, null, d + time '16:00');
+      end if;
+    end loop;
+
+    -- 5) Gastos fijos: alquiler y servicios el día 1; nómina los días 15 y último.
+    if extract(day from d) = 1 then
+      perform interno.registrar_asiento(d, 'Alquiler del local ' || to_char(d, 'MM/YYYY'), 'Gastos', jsonb_build_array(
+        jsonb_build_object('cuenta_id', v_cuenta ->> '6.1.02.01', 'debe', 650),
+        jsonb_build_object('cuenta_id', v_cuenta ->> '1.1.01.04', 'haber', 650)));
+      perform interno.registrar_asiento(d, 'Servicios públicos e internet ' || to_char(d, 'MM/YYYY'), 'Gastos', jsonb_build_array(
+        jsonb_build_object('cuenta_id', v_cuenta ->> '6.1.02.02', 'debe', 85),
+        jsonb_build_object('cuenta_id', v_cuenta ->> '6.1.02.03', 'debe', 45),
+        jsonb_build_object('cuenta_id', v_cuenta ->> '1.1.01.04', 'haber', 130)));
+    end if;
+    if extract(day from d) = 15 or d = (date_trunc('month', d) + interval '1 month - 1 day')::date then
+      perform interno.registrar_asiento(d, 'Nómina quincenal ' || to_char(d, 'DD/MM/YYYY'), 'Nómina', jsonb_build_array(
+        jsonb_build_object('cuenta_id', v_cuenta ->> '6.1.01.01', 'debe', 720),
+        jsonb_build_object('cuenta_id', v_cuenta ->> '6.1.01.02', 'debe', 160),
+        jsonb_build_object('cuenta_id', v_cuenta ->> '1.1.01.04', 'haber', 880)));
+    end if;
+  end loop;
+
+  perform set_config('arluc.fecha_operacion', '', false);
+
+  -- 6) Algunas facturas de contado anuladas (devuelven stock y generan contra-asiento).
+  update public.facturas set estado = 'anulada', motivo_anulacion = 'Error de facturación (dato de prueba)'
+   where id in (select f.id from public.facturas f
+                 where not exists (select 1 from public.cuentas_por_cobrar x where x.factura_id = f.id)
+                 order by random() limit 3);
 end;
 $$;
