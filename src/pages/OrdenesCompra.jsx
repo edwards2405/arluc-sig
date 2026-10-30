@@ -87,10 +87,21 @@ export default function OrdenesCompra() {
   }
 
   async function cambiarEstado(id, estado) {
-    const msg = estado === 'recibida' ? '¿Marcar como recibida? Esto actualizará el inventario.' : '¿Cancelar esta orden?';
-    if (!confirm(msg)) return;
+    const cambios = { estado };
+    if (estado === 'recibida') {
+      // Datos de la factura del proveedor: los exige el Libro de Compras
+      const factura = prompt('N° de factura del proveedor:');
+      if (!factura?.trim()) return;
+      const control = prompt('N° de control de la factura del proveedor:');
+      if (!control?.trim()) return;
+      if (!confirm('¿Registrar la recepción? Se actualizará el inventario, la cuenta por pagar y la retención de IVA.')) return;
+      cambios.numero_factura_proveedor = factura.trim();
+      cambios.numero_control_proveedor = control.trim();
+    } else if (!confirm('¿Cancelar esta orden?')) {
+      return;
+    }
     try {
-      const { error } = await supabase.from('ordenes_compra').update({ estado }).eq('id', id);
+      const { error } = await supabase.from('ordenes_compra').update(cambios).eq('id', id);
       if (error) throw error;
       toast.success(`Orden ${estado}`);
       loadData();

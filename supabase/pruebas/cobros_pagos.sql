@@ -11,11 +11,11 @@ create function pg_temp.como(p_email text) returns void language sql as $$
            json_build_object('sub', (select id from public.usuarios where email = p_email), 'role', 'authenticated')::text, true),
          set_config('role', 'authenticated', true) $$;
 
-\echo '=== 1. Venta a crédito a la Discoteca hace 30 días (plazo 15 días → vencida)'
+\echo '=== 1. Venta a crédito a Producciones Eventos 360 hace 30 días (plazo 15 días → vencida)'
 select f.id as factura, f.numero_factura, f.total_usd, t.tasa_usd_bs as tasa_factura
   from interno.emitir_factura(
          (select id from usuarios where email = 'vendedor@arluc.test'),
-         (select id from clientes where documento_identidad = 'J-50182736-2'),
+         (select id from clientes where documento_identidad = 'J-41234567-0'),
          jsonb_build_array(jsonb_build_object('producto_id', (select id from productos where sku = 'AUD-003'), 'cantidad', 2)),
          '[{"metodo_id":"credito","monto_usd":197.20}]', false, now() - interval '30 days') f
   join tasas_cambio t on t.id = f.tasa_id \gset

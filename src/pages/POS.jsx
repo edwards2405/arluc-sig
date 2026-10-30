@@ -348,12 +348,18 @@ export default function POS() {
   const totalUSD = redondear(baseGravada + montoExento + montoIva);
   const totalBs = tasaHoy ? totalUSD * parseFloat(tasaHoy.tasa_usd_bs) : 0;
 
+  // Cliente contribuyente especial: retiene parte del IVA (lo valida el servidor)
+  const montoRetencion = clienteSeleccionado?.contribuyente_especial
+    ? redondear(montoIva * Number(clienteSeleccionado.porcentaje_retencion_iva || 75) / 100)
+    : 0;
+  const totalACobrar = redondear(totalUSD - montoRetencion);
+
   function agregarMetodoPago(metodoId = '') {
     const metodoConfig = METODOS_PAGO.find((m) => m.id === metodoId);
     const tasa = tasaHoy ? parseFloat(tasaHoy.tasa_usd_bs) : 0;
 
     const otherPayments = metodosPago.reduce((sum, mp) => sum + parseFloat(mp.monto_usd || 0), 0);
-    const pend = Math.max(0, parseFloat((totalUSD - otherPayments).toFixed(2)));
+    const pend = Math.max(0, parseFloat((totalACobrar - otherPayments).toFixed(2)));
     const defaultMontoUSD = metodoConfig?.isCashea ? parseFloat((pend * 0.4).toFixed(2)) : pend;
     const montoBs = metodoConfig?.enBs && tasa > 0 ? parseFloat((defaultMontoUSD * tasa).toFixed(2)) : 0;
 
@@ -383,7 +389,7 @@ export default function POS() {
       const otherPayments = updated
         .filter((_, i) => i !== index)
         .reduce((sum, mp) => sum + parseFloat(mp.monto_usd || 0), 0);
-      const pend = Math.max(0, parseFloat((totalUSD - otherPayments).toFixed(2)));
+      const pend = Math.max(0, parseFloat((totalACobrar - otherPayments).toFixed(2)));
 
       if (metodoConfig?.isCashea) {
         item.monto_usd = parseFloat((pend * 0.4).toFixed(2));
@@ -429,12 +435,12 @@ export default function POS() {
     .reduce((sum, mp) => sum + parseFloat(mp.monto_usd || 0), 0);
   const casheaInicial = tieneCashea ? parseFloat(casheaItem?.monto_usd || 0) : 0;
   const totalPagadoEnTienda = otrosPagos + casheaInicial;
-  const casheaCreditoUSD = tieneCashea ? Math.max(0, parseFloat((totalUSD - totalPagadoEnTienda).toFixed(2))) : 0;
+  const casheaCreditoUSD = tieneCashea ? Math.max(0, parseFloat((totalACobrar - totalPagadoEnTienda).toFixed(2))) : 0;
   const restante = tieneCashea
     ? casheaInicial <= 0
-      ? Math.max(0, parseFloat((totalUSD - otrosPagos).toFixed(2)))
+      ? Math.max(0, parseFloat((totalACobrar - otrosPagos).toFixed(2)))
       : 0
-    : Math.max(0, parseFloat((totalUSD - totalPagadoEnTienda).toFixed(2)));
+    : Math.max(0, parseFloat((totalACobrar - totalPagadoEnTienda).toFixed(2)));
 
   // IGTF estimado sobre lo cobrado en divisas (incluye la inicial Cashea en divisas)
   const esDivisa = (metodoId) => {
@@ -536,6 +542,7 @@ export default function POS() {
         cashea_referencia_inicial: mp.cashea_referencia_inicial || '',
       }),
     }));
+    if (montoRetencion > 0) pagos.push({ metodo_id: 'retencion_iva', monto_usd: montoRetencion });
     const items = carrito.map((item) => ({ producto_id: item.producto_id, cantidad: item.cantidad }));
 
     setLoading(true);
@@ -687,6 +694,9 @@ export default function POS() {
         {/* Derecha: Resumen, Cobro y Métodos de Pago */}
         <POSPaymentSection
           totalUSD={totalUSD}
+          montoRetencion={montoRetencion}
+          porcentajeRetencion={clienteSeleccionado?.porcentaje_retencion_iva}
+          totalACobrar={totalACobrar}
           totalBs={totalBs}
           baseGravada={baseGravada}
           montoExento={montoExento}

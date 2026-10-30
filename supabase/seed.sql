@@ -122,6 +122,10 @@ insert into public.clientes (nombre, documento_identidad, telefono, email, direc
   ('Producciones Eventos 360 C.A.',  'J-41234567-0', '0414-7772211', 'compras@eventos360.test',     'Los Teques, Miranda',         true,  2000),
   ('Pedro Gutiérrez',                'V-17654321',   '0426-3334455', null,                          'Petare, Miranda',             false, 0);
 
+-- Empresas grandes designadas contribuyentes especiales: retienen el 75 % del IVA.
+update public.clientes set contribuyente_especial = true
+ where documento_identidad in ('J-50182736-2', 'J-40982314-5');
+
 insert into public.proveedores (nombre, rif, telefono, email, direccion, contacto_nombre) values
   ('Importadora Audio Global C.A.',      'J-30512894-1', '0212-9098765', 'ventas@audioglobal.test', 'La Yaguara, Caracas',  'Roberto Gómez'),
   ('Luminarias y Escenario Caracas C.A.', 'J-40112233-8', '0212-7654321', 'contacto@lumicaracas.test', 'Sabana Grande, Caracas', 'Elena Martínez'),
@@ -170,6 +174,8 @@ declare
   v_base numeric;
   v_total numeric;
   v_mitad numeric;
+  v_retencion numeric;
+  v_es_especial boolean;
   v_pagos jsonb;
   v_cliente uuid;
   v_r numeric;
@@ -183,10 +189,10 @@ begin
     -- 1) Reposición: compra y recepción de lo que está bajo el mínimo.
     perform set_config('arluc.fecha_operacion', (d + time '09:00')::text, false);
     for p in select * from public.productos where stock < stock_minimo + 2 loop
-      insert into public.ordenes_compra (numero_orden, proveedor_id, registrado_por, numero_factura_proveedor)
+      insert into public.ordenes_compra (numero_orden, proveedor_id, registrado_por, numero_factura_proveedor, numero_control_proveedor)
       values ('OC-' || lpad(interno.siguiente_valor('orden_compra')::text, 6, '0'),
               (select id from public.proveedores order by random() limit 1), c_almacen,
-              'FP-' || (10000 + floor(random() * 89999))::int)
+              'FP-' || (10000 + floor(random() * 89999))::int, '00-' || lpad(floor(random() * 99999999)::int::text, 8, '0'))
       returning id into v_orden;
       insert into public.detalles_orden_compra (orden_id, producto_id, cantidad, precio_unitario_usd)
       values (v_orden, p.id, p.stock_minimo * 3 + 5, round(p.costo_usd * (0.97 + random() * 0.08)::numeric, 2));
@@ -203,10 +209,19 @@ begin
                      least(pr.stock, case when pr.precio_usd < 20 then 1 + floor(random() * 4)::int
                                           else 1 + floor(random() * 2)::int end) as cant
                 from public.productos pr where pr.stock > 0 order by random() limit 1 + floor(random() * 3)::int) x;
-      v_total := v_base + round(v_base * 0.16, 2);
-      v_mitad := round(v_total / 2, 2);
-      v_cliente := null;
       v_r := random();
+      v_cliente := null;
+      if v_r >= 0.88 then
+        select id into v_cliente from public.clientes where credito_activo order by random() limit 1;
+      elsif random() < 0.35 then
+        select id into v_cliente from public.clientes order by random() limit 1;
+      end if;
+      select coalesce(bool_or(contribuyente_especial), false) into v_es_especial from public.clientes where id = v_cliente;
+
+      -- El cliente contribuyente especial retiene el 75 % del IVA: se cobra el resto.
+      v_retencion := case when v_es_especial then round(round(v_base * 0.16, 2) * 0.75, 2) else 0 end;
+      v_total := v_base + round(v_base * 0.16, 2) - v_retencion;
+      v_mitad := round(v_total / 2, 2);
       v_pagos := case
         when v_r < 0.28 then jsonb_build_array(jsonb_build_object('metodo_id', 'efectivo_usd', 'monto_usd', v_total))
         when v_r < 0.50 then jsonb_build_array(jsonb_build_object('metodo_id', 'pago_movil', 'monto_usd', v_total,
@@ -222,10 +237,8 @@ begin
         when v_r < 0.88 then jsonb_build_array(jsonb_build_object('metodo_id', 'cashea', 'monto_usd', round(v_total * 0.4, 2),
                                'referencia', 'CSH-' || floor(random() * 99999)::int, 'cashea_metodo_inicial', 'punto_venta'))
         else jsonb_build_array(jsonb_build_object('metodo_id', 'credito', 'monto_usd', v_total)) end;
-      if v_r >= 0.88 then
-        select id into v_cliente from public.clientes where credito_activo order by random() limit 1;
-      elsif random() < 0.35 then
-        select id into v_cliente from public.clientes order by random() limit 1;
+      if v_retencion > 0 then
+        v_pagos := v_pagos || jsonb_build_array(jsonb_build_object('metodo_id', 'retencion_iva', 'monto_usd', v_retencion));
       end if;
 
       begin
@@ -258,6 +271,23 @@ begin
           (array['transferencia', 'efectivo_usd'])[1 + floor(random() * 2)::int], null, null, d + time '16:00');
       end if;
     end loop;
+
+    -- 4b) Los clientes entregan su comprobante de retención a los 3 días.
+    for c in select * from public.retenciones_iva
+              where tipo = 'RECIBIDA' and estado = 'PENDIENTE' and fecha <= d - 3 loop
+      perform interno.registrar_comprobante_recibido(
+        c.id, to_char(c.fecha, 'YYYYMM') || lpad((10000000 + floor(random() * 89999999))::text, 8, '0'), c.fecha);
+    end loop;
+
+    -- 4c) Enteramiento al SENIAT: la 1ra quincena el día 20 y la 2da el día 5 del mes siguiente.
+    if extract(day from d) = 20 and exists (select 1 from public.retenciones_iva where tipo = 'EMITIDA' and estado = 'REGISTRADA'
+         and anio = extract(year from d) and mes = extract(month from d) and quincena = 1) then
+      perform interno.enterar_retenciones_iva(extract(year from d)::int, extract(month from d)::int, 1, 'transferencia', d);
+    end if;
+    if extract(day from d) = 5 and exists (select 1 from public.retenciones_iva where tipo = 'EMITIDA' and estado = 'REGISTRADA'
+         and anio = extract(year from d - 10) and mes = extract(month from d - 10) and quincena = 2) then
+      perform interno.enterar_retenciones_iva(extract(year from d - 10)::int, extract(month from d - 10)::int, 2, 'transferencia', d);
+    end if;
 
     -- 5) Gastos fijos: alquiler y servicios el día 1; nómina los días 15 y último.
     if extract(day from d) = 1 then

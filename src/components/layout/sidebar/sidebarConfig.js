@@ -66,6 +66,7 @@ const navigationGroups = [
       { to: '/contabilidad/libro-mayor', label: 'Libro Mayor' },
       { to: '/contabilidad/balance-comprobacion', label: 'Balance de Comprobación' },
       { to: '/contabilidad/estados-financieros', label: 'Estados Financieros' },
+      { to: '/contabilidad/libros-fiscales', label: 'Libros Fiscales (IVA)' },
     ],
   },
   {

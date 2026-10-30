@@ -14,7 +14,7 @@ export default function Proveedores() {
   const [currentPage, setCurrentPage] = useState(1);
   const [showModal, setShowModal] = useState(false);
   const [editando, setEditando] = useState(null);
-  const [form, setForm] = useState({ nombre: '', rif: '', telefono: '', email: '', direccion: '', contacto_nombre: '', activo: true });
+  const [form, setForm] = useState({ nombre: '', rif: '', telefono: '', email: '', direccion: '', contacto_nombre: '', activo: true, porcentaje_retencion_iva: 75 });
   const [provToDelete, setProvToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -67,12 +67,12 @@ export default function Proveedores() {
 
   function editarProveedor(p) {
     setEditando(p);
-    setForm({ nombre: p.nombre, rif: p.rif, telefono: p.telefono || '', email: p.email || '', direccion: p.direccion || '', contacto_nombre: p.contacto_nombre || '', activo: p.activo });
+    setForm({ nombre: p.nombre, rif: p.rif, telefono: p.telefono || '', email: p.email || '', direccion: p.direccion || '', contacto_nombre: p.contacto_nombre || '', activo: p.activo, porcentaje_retencion_iva: p.porcentaje_retencion_iva ?? 75 });
     setShowModal(true);
   }
 
   function resetForm() {
-    setForm({ nombre: '', rif: '', telefono: '', email: '', direccion: '', contacto_nombre: '', activo: true });
+    setForm({ nombre: '', rif: '', telefono: '', email: '', direccion: '', contacto_nombre: '', activo: true, porcentaje_retencion_iva: 75 });
   }
 
   const filtrados = proveedores.filter(p =>
@@ -179,6 +179,14 @@ export default function Proveedores() {
               <div className="form-group">
                 <label>Dirección</label>
                 <input value={form.direccion} onChange={e => setForm({...form, direccion: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Retención de IVA que le practicamos</label>
+                <select value={form.porcentaje_retencion_iva} onChange={e => setForm({...form, porcentaje_retencion_iva: Number(e.target.value)})}>
+                  <option value={75}>75 % (general)</option>
+                  <option value={100}>100 % (sin RIF o factura sin requisitos)</option>
+                  <option value={0}>No aplica</option>
+                </select>
               </div>
               <div className="form-group">
                 <label className="checkbox-label"><input type="checkbox" checked={form.activo} onChange={e => setForm({...form, activo: e.target.checked})} /> Proveedor activo</label>

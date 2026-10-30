@@ -30,6 +30,7 @@ export default function Clientes() {
   const [form, setForm] = useState({
     nombre: '', documento_identidad: '', telefono: '', direccion: '', email: '',
     linea_credito: 0, credito_activo: false, moneda_credito: 'usd',
+    contribuyente_especial: false, porcentaje_retencion_iva: 75,
   });
   const [clienteToDelete, setClienteToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -37,6 +38,7 @@ export default function Clientes() {
   const [creditoCliente, setCreditoCliente] = useState(null);
   const [creditoForm, setCreditoForm] = useState({
     linea_credito: 0, credito_activo: false, moneda_credito: 'usd',
+    contribuyente_especial: false, porcentaje_retencion_iva: 75,
   });
   const [savingCredito, setSavingCredito] = useState(false);
 
@@ -59,6 +61,8 @@ export default function Clientes() {
         telefono: form.telefono,
         direccion: form.direccion,
         email: form.email,
+        contribuyente_especial: !!form.contribuyente_especial,
+        porcentaje_retencion_iva: Number(form.porcentaje_retencion_iva) || 75,
         // Las condiciones de crédito solo las fija admin/gerente (la BD lo valida)
         ...(isAdmin && {
           linea_credito: parseFloat(form.linea_credito) || 0,
@@ -142,7 +146,7 @@ export default function Clientes() {
   }
 
   function resetForm() {
-    setForm({ nombre: '', documento_identidad: '', telefono: '', direccion: '', email: '', linea_credito: 0, credito_activo: false, moneda_credito: 'usd' });
+    setForm({ nombre: '', documento_identidad: '', telefono: '', direccion: '', email: '', linea_credito: 0, credito_activo: false, moneda_credito: 'usd', contribuyente_especial: false, porcentaje_retencion_iva: 75 });
   }
 
   function editarCliente(cliente) {
@@ -156,6 +160,8 @@ export default function Clientes() {
       linea_credito: cliente.linea_credito || 0,
       credito_activo: cliente.credito_activo || false,
       moneda_credito: cliente.moneda_credito || 'usd',
+      contribuyente_especial: !!cliente.contribuyente_especial,
+      porcentaje_retencion_iva: cliente.porcentaje_retencion_iva || 75,
     });
     setShowModal(true);
   }
@@ -360,6 +366,29 @@ export default function Clientes() {
                   </div>
                 </>
               )}
+
+              <div className="form-row" style={{ alignItems: 'flex-end' }}>
+                <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox" id="contribuyente_especial_form"
+                    checked={form.contribuyente_especial}
+                    onChange={e => setForm({ ...form, contribuyente_especial: e.target.checked })}
+                    style={{ width: 'auto' }}
+                  />
+                  <label htmlFor="contribuyente_especial_form" style={{ margin: 0, cursor: 'pointer' }}>
+                    Contribuyente especial (nos retiene IVA)
+                  </label>
+                </div>
+                {form.contribuyente_especial && (
+                  <div className="form-group">
+                    <label>% de retención de IVA</label>
+                    <select value={form.porcentaje_retencion_iva} onChange={e => setForm({ ...form, porcentaje_retencion_iva: e.target.value })}>
+                      <option value={75}>75 % (general)</option>
+                      <option value={100}>100 %</option>
+                    </select>
+                  </div>
+                )}
+              </div>
 
               <button type="submit" className="btn btn--primary btn--full">{editando ? 'Guardar' : 'Crear Cliente'}</button>
             </form>

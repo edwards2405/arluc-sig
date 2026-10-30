@@ -380,6 +380,12 @@ export default function TicketFactura({ factura, onClose }) {
                 <span>IVA {Number(factura.alicuota_iva)}%:</span>
                 <span>{formatUSD(factura.iva_usd)}</span>
               </div>
+              {Number(factura.iva_retenido_usd) > 0 && (
+                <div className="ticket__row">
+                  <span>IVA retenido por el comprador:</span>
+                  <span>-{formatUSD(factura.iva_retenido_usd)}</span>
+                </div>
+              )}
               {Number(factura.igtf_usd) > 0 && (
                 <div className="ticket__row">
                   <span>IGTF {Number(factura.alicuota_igtf)}% s/ {formatUSD(factura.base_igtf_usd)}:</span>

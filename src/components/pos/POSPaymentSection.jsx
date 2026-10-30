@@ -4,6 +4,9 @@ import { formatUSD, formatBs } from '../../utils/formatters';
 
 export default function POSPaymentSection({
   totalUSD,
+  montoRetencion = 0,
+  porcentajeRetencion,
+  totalACobrar,
   totalBs,
   baseGravada,
   montoExento,
@@ -56,6 +59,18 @@ export default function POSPaymentSection({
             <span>Total USD</span>
             <span>{formatUSD(totalUSD)}</span>
           </div>
+          {montoRetencion > 0 && (
+            <>
+              <div className="pos-totals__row" style={{ color: 'var(--info)' }}>
+                <span>− Retención IVA {Number(porcentajeRetencion)}% (contribuyente especial)</span>
+                <span>{formatUSD(montoRetencion)}</span>
+              </div>
+              <div className="pos-totals__row" style={{ fontWeight: 700 }}>
+                <span>A cobrar</span>
+                <span>{formatUSD(totalACobrar)}</span>
+              </div>
+            </>
+          )}
           {tasaHoy && (
             <div className="pos-totals__row pos-totals__row--bs">
               <span>Total Bs</span>
@@ -72,7 +87,7 @@ export default function POSPaymentSection({
               onClick={onIniciarCobro}
               disabled={carrito.length === 0}
             >
-              Cobrar {formatUSD(totalUSD)}
+              Cobrar {formatUSD(totalACobrar)}
             </button>
 
             {tieneContenido && (
@@ -314,7 +329,7 @@ export default function POSPaymentSection({
                   </div>
                   <div className="pos-totals__row" style={{ fontWeight: 'bold' }}>
                     <span>Total a cobrar con IGTF</span>
-                    <span>{formatUSD(totalUSD + montoIgtf)}</span>
+                    <span>{formatUSD(totalACobrar + montoIgtf)}</span>
                   </div>
                 </>
               )}
@@ -333,7 +348,7 @@ export default function POSPaymentSection({
                 onClick={onEmitirFactura}
                 disabled={loading || restante > 0.01}
               >
-                {loading ? 'Procesando...' : `Emitir Factura ${formatUSD(totalUSD + montoIgtf)}`}
+                {loading ? 'Procesando...' : `Emitir Factura ${formatUSD(totalACobrar + montoIgtf)}`}
               </button>
               <button type="button" className="btn btn--ghost btn--full" onClick={onVolverAlCarrito}>
                 Volver al Carrito

@@ -21,7 +21,7 @@ set search_path = ''
 as $$
 begin
   if not public.tiene_rol('admin', 'gerente', 'contador') then
-    raise exception 'Solo la dirección (admin, gerente o contador) puede consultar indicadores gerenciales.';
+    raise exception 'Solo la dirección (admin, gerente o contador) puede consultar esta información gerencial o fiscal.';
   end if;
 end;
 $$;
