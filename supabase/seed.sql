@@ -326,3 +326,39 @@ select extract(year from m)::int, extract(month from m)::int, v.id, v.monto,
     (null::uuid, 28000::numeric),
     ('a0000000-0000-4000-8000-000000000004'::uuid, 14000),
     ('a0000000-0000-4000-8000-000000000006'::uuid, 13000)) as v(id, monto);
+
+-- Notas de crédito y débito de prueba (dos días después de la factura).
+do $$
+declare
+  c_gerente uuid := 'a0000000-0000-4000-8000-000000000002';
+  f record;
+begin
+  perform setseed(0.77);
+  for f in select x.id, x.fecha_emision, d.producto_id
+             from public.facturas x
+             join lateral (select producto_id from public.detalles_factura where factura_id = x.id limit 1) d on true
+            where x.estado = 'emitida' and x.fecha_emision < current_date - 7
+              and not exists (select 1 from public.cuentas_por_cobrar k where k.factura_id = x.id)
+            order by random() limit 3 loop
+    perform interno.emitir_nota_credito(c_gerente, f.id, 'DEVOLUCION',
+      jsonb_build_array(jsonb_build_object('producto_id', f.producto_id, 'cantidad', 1)), null,
+      'Devolución por falla de fábrica (dato de prueba)', 'efectivo_usd', f.fecha_emision + interval '2 days');
+  end loop;
+
+  for f in select x.id, x.fecha_emision from public.facturas x
+            where x.estado = 'emitida' and x.fecha_emision < current_date - 7 and x.base_imponible_usd > 60
+              and not exists (select 1 from public.notas_fiscales n where n.factura_id = x.id)
+            order by random() limit 2 loop
+    perform interno.emitir_nota_credito(c_gerente, f.id, 'DESCUENTO', null, 15,
+      'Descuento comercial posterior a la venta (dato de prueba)', 'pago_movil', f.fecha_emision + interval '2 days');
+  end loop;
+
+  for f in select x.id, x.fecha_emision from public.facturas x
+            where x.estado = 'emitida' and x.fecha_emision < current_date - 7 and x.cliente_id is not null
+              and not exists (select 1 from public.notas_fiscales n where n.factura_id = x.id)
+            order by random() limit 1 loop
+    perform interno.emitir_nota_debito(c_gerente, f.id, 'CARGO_ADICIONAL', 25,
+      'Flete de entrega a domicilio (dato de prueba)', 'transferencia', f.fecha_emision + interval '2 days');
+  end loop;
+end;
+$$;

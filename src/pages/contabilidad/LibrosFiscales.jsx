@@ -96,8 +96,8 @@ export default function LibrosFiscales() {
   function exportar(tipo) {
     const filas = tipo === 'ventas'
       ? datos.ventas.map((v, i) => ({
-          'N° Op.': i + 1, Fecha: formatFecha(v.fecha), 'RIF / C.I.': v.rif, 'Nombre o razón social': v.nombre,
-          'N° Factura': v.numero_factura, 'N° Control': v.numero_control, Estado: v.estado,
+          'N° Op.': i + 1, Fecha: formatFecha(v.fecha), 'Tipo doc.': v.tipo_documento, 'RIF / C.I.': v.rif, 'Nombre o razón social': v.nombre,
+          'N° Documento': v.numero_factura, 'N° Control': v.numero_control, 'Factura afectada': v.factura_afectada || '', Estado: v.estado,
           'Total ventas con IVA': Number(v.total_bs), 'Ventas exentas': Number(v.exento_bs), 'Base imponible': Number(v.base_bs),
           '% Alícuota': Number(v.alicuota), 'Impuesto IVA': Number(v.iva_bs), 'IVA retenido (comprador)': Number(v.iva_retenido_bs),
           'N° comprobante retención': v.comprobante_retencion || '', IGTF: Number(v.igtf_bs), 'Tasa BCV': Number(v.tasa),
@@ -173,7 +173,10 @@ export default function LibrosFiscales() {
         <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))' }}>
           <div className="card">
             <h3 className="card__title">Declaración de IVA · {r.periodo}</h3>
-            <Fila etiqueta={`Débito fiscal (${r.ventas.documentos} facturas, ${r.ventas.anuladas} anuladas)`} valor={r.ventas.debito_fiscal_bs} />
+            <Fila etiqueta={`Débito fiscal neto (${r.ventas.documentos} facturas, ${r.ventas.anuladas} anuladas, ${r.ventas.notas_credito ?? 0} NC, ${r.ventas.notas_debito ?? 0} ND)`} valor={r.ventas.debito_fiscal_bs} />
+            {Number(r.ventas.iva_rebajado_nc_bs) > 0 && (
+              <p className="stat-card__sub" style={{ margin: '0.25rem 0' }}>Incluye {formatBs(r.ventas.iva_rebajado_nc_bs)} de IVA rebajado por notas de crédito.</p>
+            )}
             <Fila signo="−" etiqueta={`Crédito fiscal (${r.compras.documentos} compras)`} valor={r.compras.credito_fiscal_bs} />
             <Fila signo="−" etiqueta="Retenciones que nos practicaron (con comprobante)" valor={r.retenciones_soportadas_bs} />
             <Fila etiqueta="Cuota de IVA a pagar" valor={r.cuota_a_pagar_bs} fuerte />
@@ -212,7 +215,7 @@ export default function LibrosFiscales() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Fecha</th><th>RIF / C.I.</th><th>Nombre</th><th>Factura</th><th>Control</th>
+                  <th>Fecha</th>{pestana === 'ventas' && <th>Tipo</th>}<th>RIF / C.I.</th><th>Nombre</th><th>Documento</th><th>Control</th>
                   <th style={{ textAlign: 'right' }}>Total Bs</th><th style={{ textAlign: 'right' }}>Base Bs</th>
                   <th style={{ textAlign: 'right' }}>IVA Bs</th><th style={{ textAlign: 'right' }}>Retenido Bs</th><th>Comprobante</th>
                   {pestana === 'ventas' && <th style={{ textAlign: 'right' }}>IGTF Bs</th>}
@@ -220,11 +223,14 @@ export default function LibrosFiscales() {
               </thead>
               <tbody>
                 {(pestana === 'ventas' ? datos.ventas : datos.compras).map((x) => (
-                  <tr key={x.numero_factura + (x.numero_orden || '')} className={x.estado === 'ANULADA' ? 'table__row--muted' : ''}>
+                  <tr key={(x.tipo_documento || '') + x.numero_factura + (x.numero_orden || '')} className={x.estado === 'ANULADA' ? 'table__row--muted' : ''}>
                     <td>{formatFecha(x.fecha)}</td>
+                    {pestana === 'ventas' && (
+                      <td><span className={`badge ${x.tipo_documento === 'NC' ? 'badge--warning' : x.tipo_documento === 'ND' ? 'badge--info' : 'badge--ghost'}`}>{x.tipo_documento}</span></td>
+                    )}
                     <td>{x.rif}</td>
                     <td>{x.nombre}{x.estado === 'ANULADA' && <span className="badge badge--danger" style={{ marginLeft: 6 }}>Anulada</span>}</td>
-                    <td><code>{x.numero_factura}</code></td>
+                    <td><code>{x.numero_factura}</code>{x.factura_afectada && <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>Afecta {x.factura_afectada}</div>}</td>
                     <td>{x.numero_control}</td>
                     <td style={{ textAlign: 'right' }}>{num(x.total_bs)}</td>
                     <td style={{ textAlign: 'right' }}>{num(x.base_bs)}</td>

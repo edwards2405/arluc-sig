@@ -10,8 +10,16 @@ import {
 } from 'react-icons/hi2';
 
 import ConfirmModal from '../components/common/ConfirmModal';
+import NotaFiscalModal, { imprimirNota } from '../components/notas/NotaFiscalModal';
+import { useAuth } from '../contexts/AuthContext';
+
+// Una factura solo se anula el mismo día; después se corrige con nota de crédito
+const esDeHoy = (f) => new Date(f.fecha_emision).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA');
 
 export default function HistorialFacturas() {
+  const { profile } = useAuth();
+  const puedeEmitirNotas = ['admin', 'gerente'].includes(profile?.rol);
+  const [notaAEmitir, setNotaAEmitir] = useState(null);
   const [facturas, setFacturas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -41,7 +49,7 @@ export default function HistorialFacturas() {
           .from('facturas')
           .select(`
             *,
-            clientes(nombre, documento_identidad),
+            clientes(nombre, documento_identidad, contribuyente_especial, porcentaje_retencion_iva),
             usuarios!facturas_vendedor_id_fkey(nombre_completo),
             tasas_cambio(tasa_usd_bs, fecha_registro)
           `)
@@ -68,11 +76,11 @@ export default function HistorialFacturas() {
   }
 
   async function verDetalle(factura) {
-    const { data: detalles } = await supabase
-      .from('detalles_factura')
-      .select('*')
-      .eq('factura_id', factura.id);
-    setShowDetalle({ ...factura, detalles: detalles || [] });
+    const [{ data: detalles }, { data: notas }] = await Promise.all([
+      supabase.from('detalles_factura').select('*').eq('factura_id', factura.id),
+      supabase.from('notas_fiscales').select('*').eq('factura_id', factura.id).order('fecha_emision'),
+    ]);
+    setShowDetalle({ ...factura, detalles: detalles || [], notas: notas || [] });
   }
 
   async function handleConfirmAnular() {
@@ -224,7 +232,9 @@ export default function HistorialFacturas() {
                         {f.estado === 'emitida' && (
                           <>
                             <button className="btn btn--ghost btn--xs" onClick={() => imprimirFactura(f)} title="Imprimir Ticket"><HiOutlinePrinter /></button>
-                            <button className="btn btn--ghost btn--xs text-danger" onClick={() => setFacturaToAnular(f)} title="Anular Factura"><HiOutlineXCircle /></button>
+                            {esDeHoy(f) && (
+                              <button className="btn btn--ghost btn--xs text-danger" onClick={() => setFacturaToAnular(f)} title="Anular Factura (solo el mismo día)"><HiOutlineXCircle /></button>
+                            )}
                           </>
                         )}
                       </div>
@@ -466,15 +476,41 @@ export default function HistorialFacturas() {
                 });
               })()}
 
-              <div className="pos-payment-actions" style={{ marginTop: '1.5rem' }}>
+              {(showDetalle.notas || []).length > 0 && (
+                <div style={{ marginTop: '1.25rem' }}>
+                  <h4 style={{ marginBottom: '0.5rem' }}>Notas de crédito y débito</h4>
+                  {showDetalle.notas.map((n) => (
+                    <div key={n.id} className="pos-totals__row" style={{ alignItems: 'center' }}>
+                      <span>
+                        <span className={`badge ${n.tipo === 'CREDITO' ? 'badge--warning' : 'badge--info'}`}>{n.tipo === 'CREDITO' ? 'NC' : 'ND'}</span>{' '}
+                        <code>{n.numero}</code> · {formatFecha(n.fecha_emision)} · {n.motivo}
+                      </span>
+                      <span>
+                        {n.tipo === 'CREDITO' ? '−' : '+'}{formatUSD(n.total_usd)}
+                        <button className="btn btn--ghost btn--xs" onClick={() => imprimirNota(n, showDetalle)} title="Imprimir nota"><HiOutlinePrinter /></button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="pos-payment-actions" style={{ marginTop: '1.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 {showDetalle.estado === 'emitida' && (
                   <>
                     <button className="btn btn--primary" onClick={() => imprimirFactura(showDetalle)}>
                       <HiOutlinePrinter /> Imprimir Ticket
                     </button>
-                    <button className="btn btn--ghost text-danger" onClick={() => setFacturaToAnular(showDetalle)}>
-                      <HiOutlineXCircle /> Anular Factura
-                    </button>
+                    {puedeEmitirNotas && (
+                      <>
+                        <button className="btn btn--secondary" onClick={() => setNotaAEmitir('CREDITO')}>Nota de crédito</button>
+                        <button className="btn btn--secondary" onClick={() => setNotaAEmitir('DEBITO')}>Nota de débito</button>
+                      </>
+                    )}
+                    {esDeHoy(showDetalle) && (showDetalle.notas || []).length === 0 && (
+                      <button className="btn btn--ghost text-danger" onClick={() => setFacturaToAnular(showDetalle)}>
+                        <HiOutlineXCircle /> Anular Factura
+                      </button>
+                    )}
                   </>
                 )}
                 <button className="btn btn--ghost" onClick={() => setShowDetalle(null)}>Cerrar</button>
@@ -482,6 +518,18 @@ export default function HistorialFacturas() {
             </div>
           </div>
         </div>
+      )}
+
+      {notaAEmitir && showDetalle && (
+        <NotaFiscalModal
+          factura={showDetalle}
+          tipo={notaAEmitir}
+          onClose={() => setNotaAEmitir(null)}
+          onEmitida={() => {
+            setNotaAEmitir(null);
+            verDetalle(showDetalle);
+          }}
+        />
       )}
 
       {/* Confirmation Modal for Voiding Invoices */}
