@@ -12,6 +12,8 @@ import toast from 'react-hot-toast';
 import { exportarExcel, imprimirReporte } from '../../utils/reportes';
 import { formatFecha as formatearFecha } from '../../utils/formatters';
 import { fetchCuentasOperativas, fetchMovimientosCuenta } from '../../services/contabilidadService';
+import Pagination from '../../components/common/Pagination';
+import usePaginacion from '../../hooks/usePaginacion';
 
 function cuentaEsDeudora(cuenta) {
   return cuenta?.naturaleza?.toUpperCase() === 'DEUDORA'
@@ -124,6 +126,7 @@ export default function LibroMayor() {
       return true;
     });
   }, [movimientosConSaldo, fechaDesde, fechaHasta]);
+  const { visibles: movimientosPagina, paginacion } = usePaginacion(movimientosFiltrados, 25);
 
   // Totales de movimientos filtrados
   const { totalDebe, totalHaber, totalDebeVes, totalHaberVes } = useMemo(() => {
@@ -519,7 +522,7 @@ export default function LibroMayor() {
                 </tr>
               </thead>
               <tbody>
-                {movimientosFiltrados.map((m) => {
+                {movimientosPagina.map((m) => {
                   const debe = Number(m.debe || 0);
                   const haber = Number(m.haber || 0);
                   const debeVes = Number(m.debe_ves || 0);
@@ -622,6 +625,7 @@ export default function LibroMayor() {
             </table>
           </div>
         )}
+        <Pagination {...paginacion} />
       </div>
     </div>
   );

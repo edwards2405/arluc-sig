@@ -5,6 +5,8 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatBs, formatFecha } from '../../utils/formatters';
 import { getEmpresaConfig } from '../../utils/constants';
+import Pagination from '../../components/common/Pagination';
+import usePaginacion from '../../hooks/usePaginacion';
 import {
   HiOutlineArrowDownTray, HiOutlinePrinter, HiOutlineDocumentCheck, HiOutlineBanknotes, HiOutlineArrowPath,
 } from 'react-icons/hi2';
@@ -207,6 +209,10 @@ export default function LibrosFiscales() {
   const r = datos.resumen;
   const emitidas = datos.retenciones.filter((x) => x.tipo === 'EMITIDA');
   const recibidas = datos.retenciones.filter((x) => x.tipo === 'RECIBIDA');
+  const libro = pestana === 'ventas' ? datos.ventas : datos.compras;
+  const pagLibro = usePaginacion(libro, 25);
+  const pagEmitidas = usePaginacion(emitidas, 15);
+  const pagRecibidas = usePaginacion(recibidas, 15);
   const porEnterar = (q) => emitidas.filter((x) => x.quincena === q && x.estado === 'REGISTRADA');
   // Solo se entera una quincena cerrada: después del día 15 o del último día del mes
   const quincenaCerrada = (q) => {
@@ -301,7 +307,7 @@ export default function LibrosFiscales() {
                 </tr>
               </thead>
               <tbody>
-                {(pestana === 'ventas' ? datos.ventas : datos.compras).map((x) => (
+                {pagLibro.visibles.map((x) => (
                   <tr key={(x.tipo_documento || '') + x.numero_factura + (x.numero_orden || '')} className={x.estado === 'ANULADA' ? 'table__row--muted' : ''}>
                     <td>{formatFecha(x.fecha)}</td>
                     {pestana === 'ventas' && (
@@ -319,12 +325,13 @@ export default function LibrosFiscales() {
                     {pestana === 'ventas' && <td style={{ textAlign: 'right' }}>{Number(x.igtf_bs) > 0 ? num(x.igtf_bs) : '—'}</td>}
                   </tr>
                 ))}
-                {(pestana === 'ventas' ? datos.ventas : datos.compras).length === 0 && (
+                {libro.length === 0 && (
                   <tr><td colSpan="11" className="table__empty">Sin documentos en el período</td></tr>
                 )}
               </tbody>
             </table>
           </div>
+          <Pagination {...pagLibro.paginacion} />
         </div>
       )}
 
@@ -350,7 +357,7 @@ export default function LibrosFiscales() {
                     <th>%</th><th style={{ textAlign: 'right' }}>Retenido Bs</th><th>Estado</th><th /></tr>
                 </thead>
                 <tbody>
-                  {emitidas.map((x) => (
+                  {pagEmitidas.visibles.map((x) => (
                     <tr key={x.id}>
                       <td><code>{x.numero_comprobante}</code></td>
                       <td>{formatFecha(x.fecha)} · Q{x.quincena}</td>
@@ -368,6 +375,7 @@ export default function LibrosFiscales() {
                 </tbody>
               </table>
             </div>
+            <Pagination {...pagEmitidas.paginacion} />
           </div>
 
           <div className="card">
@@ -379,7 +387,7 @@ export default function LibrosFiscales() {
                     <th>%</th><th style={{ textAlign: 'right' }}>Retenido Bs</th><th>Comprobante</th><th /></tr>
                 </thead>
                 <tbody>
-                  {recibidas.map((x) => (
+                  {pagRecibidas.visibles.map((x) => (
                     <tr key={x.id} className={x.estado === 'ANULADA' ? 'table__row--muted' : ''}>
                       <td>{formatFecha(x.fecha)}</td>
                       <td>{x.tercero_nombre}<div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{x.tercero_rif}</div></td>
@@ -402,6 +410,7 @@ export default function LibrosFiscales() {
                 </tbody>
               </table>
             </div>
+            <Pagination {...pagRecibidas.paginacion} />
           </div>
         </>
       )}

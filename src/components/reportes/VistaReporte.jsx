@@ -2,6 +2,8 @@ import { HiOutlineArrowDownTray, HiOutlinePrinter, HiOutlineCheckCircle, HiOutli
 import toast from 'react-hot-toast';
 import { exportarExcel, imprimirReporte } from '../../utils/reportes';
 import { formatFecha } from '../../utils/formatters';
+import Pagination from '../common/Pagination';
+import usePaginacion from '../../hooks/usePaginacion';
 
 const esNumerico = (tipo) => ['monto', 'usd', 'bs', 'numero', 'porcentaje'].includes(tipo);
 
@@ -49,6 +51,43 @@ export function FichaCalidad({ calidad, verificaciones = [] }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** Una sección del reporte: paginada en pantalla, con los totales siempre visibles. */
+function TablaSeccion({ seccion: s }) {
+  const esTotal = (f) => f._estilo === 'total' || f._estilo === 'subtotal';
+  const detalle = s.filas.filter((f) => !esTotal(f));
+  const totales = s.filas.filter(esTotal);
+  const { visibles, paginacion } = usePaginacion(detalle, 15);
+  const fila = (f, j) => (
+    <tr key={j} style={esTotal(f) ? { fontWeight: 700, background: 'var(--primary-bg)' } : undefined}>
+      {s.columnas.map((c) => (
+        <td key={c.clave} style={{ textAlign: esNumerico(c.tipo) ? 'right' : 'left', whiteSpace: c.tipo === 'codigo' || esNumerico(c.tipo) ? 'nowrap' : undefined,
+          fontVariantNumeric: 'tabular-nums' }}>
+          {formato(f[c.clave], c.tipo)}
+        </td>
+      ))}
+    </tr>
+  );
+  return (
+    <div style={{ marginBottom: '1.5rem' }}>
+      {s.titulo && <h3 className="card__title" style={{ marginBottom: '0.6rem' }}>{s.titulo}</h3>}
+      <div className="table-container">
+        <table className="table">
+          <thead>
+            <tr>{s.columnas.map((c) => <th key={c.clave} style={{ textAlign: esNumerico(c.tipo) ? 'right' : 'left' }}>{c.titulo}</th>)}</tr>
+          </thead>
+          <tbody>
+            {visibles.map(fila)}
+            {totales.map((f, j) => fila(f, `t${j}`))}
+            {s.filas.length === 0 && <tr><td colSpan={s.columnas.length} className="table__empty">Sin datos</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <Pagination {...paginacion} />
+      {s.nota && <p className="stat-card__sub" style={{ marginTop: '0.5rem' }}>{s.nota}</p>}
     </div>
   );
 }
@@ -104,33 +143,7 @@ export default function VistaReporte({ reporte, verificaciones = [], extra }) {
 
       {extra}
 
-      {(reporte.hojas ? reporte.hojas.flatMap((h) => h.secciones) : reporte.secciones).map((s, i) => (
-        <div key={i} style={{ marginBottom: '1.5rem' }}>
-          {s.titulo && <h3 className="card__title" style={{ marginBottom: '0.6rem' }}>{s.titulo}</h3>}
-          <div className="table-container">
-            <table className="table">
-              <thead>
-                <tr>{s.columnas.map((c) => <th key={c.clave} style={{ textAlign: esNumerico(c.tipo) ? 'right' : 'left' }}>{c.titulo}</th>)}</tr>
-              </thead>
-              <tbody>
-                {s.filas.map((f, j) => (
-                  <tr key={j} style={f._estilo === 'total' || f._estilo === 'subtotal'
-                    ? { fontWeight: 700, background: 'var(--primary-bg)' } : undefined}>
-                    {s.columnas.map((c) => (
-                      <td key={c.clave} style={{ textAlign: esNumerico(c.tipo) ? 'right' : 'left', whiteSpace: c.tipo === 'codigo' || esNumerico(c.tipo) ? 'nowrap' : undefined,
-                        fontVariantNumeric: 'tabular-nums' }}>
-                        {formato(f[c.clave], c.tipo)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-                {s.filas.length === 0 && <tr><td colSpan={s.columnas.length} className="table__empty">Sin datos</td></tr>}
-              </tbody>
-            </table>
-          </div>
-          {s.nota && <p className="stat-card__sub" style={{ marginTop: '0.5rem' }}>{s.nota}</p>}
-        </div>
-      ))}
+      {(reporte.hojas ? reporte.hojas.flatMap((h) => h.secciones) : reporte.secciones).map((s, i) => <TablaSeccion key={`${reporte.titulo}-${reporte.subtitulo}-${i}`} seccion={s} />)}
 
       {reporte.notas?.map((n) => <p key={n} className="stat-card__sub" style={{ marginTop: '0.35rem' }}>{n}</p>)}
     </div>

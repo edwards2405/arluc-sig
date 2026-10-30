@@ -11,6 +11,8 @@ import {
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatUSD, formatBs, formatFecha } from '../utils/formatters';
+import Pagination from '../components/common/Pagination';
+import usePaginacion from '../hooks/usePaginacion';
 
 // Paleta categórica validada (ver skill de visualización): ventas, margen, 3er slot.
 const ESTILOS = `
@@ -125,6 +127,8 @@ export default function PanelGerencial() {
   const [datos, setDatos] = useState(null);
   const [loading, setLoading] = useState(true);
   const [vistaAbc, setVistaAbc] = useState(false);
+  const pagAbc = usePaginacion(datos?.abc, 15);
+  const pagRfm = usePaginacion(datos?.rfm, 10);
 
   const hoy = new Date();
   const anio = hoy.getFullYear();
@@ -440,7 +444,7 @@ export default function PanelGerencial() {
             <table className="table">
               <thead><tr><th>Clase</th><th>Producto</th><th>Margen</th><th>% Acum.</th><th>Stock</th><th>Cobertura</th></tr></thead>
               <tbody>
-                {(vistaAbc ? datos.abc : datos.abc.slice(0, 8)).map((p) => (
+                {(vistaAbc ? pagAbc.visibles : datos.abc.slice(0, 8)).map((p) => (
                   <tr key={p.producto_id}>
                     <td><span className="sig-clase" style={{ background: COLOR_CLASE[p.clase] }}>{p.clase}</span></td>
                     <td>{p.nombre}<div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{p.sku} · {num(p.margen_pct, 1)} % margen</div></td>
@@ -455,6 +459,7 @@ export default function PanelGerencial() {
               </tbody>
             </table>
           </div>
+          {vistaAbc && <Pagination {...pagAbc.paginacion} />}
           {datos.abc.length > 8 && (
             <button className="btn btn--ghost btn--sm" onClick={() => setVistaAbc(!vistaAbc)}>
               {vistaAbc ? 'Ver menos' : `Ver los ${datos.abc.length} productos`}
@@ -473,7 +478,7 @@ export default function PanelGerencial() {
             <table className="table">
               <thead><tr><th>Cliente</th><th>Última compra</th><th>Compras</th><th>Monto</th><th>R-F-M</th><th>Segmento</th></tr></thead>
               <tbody>
-                {datos.rfm.map((c) => (
+                {pagRfm.visibles.map((c) => (
                   <tr key={c.cliente_id}>
                     <td>{c.nombre}{Number(c.saldo_pendiente) > 0 && <div className="text-xs" style={{ color: 'var(--warning)' }}>Debe {formatUSD(c.saldo_pendiente)}</div>}</td>
                     <td>hace {c.recencia_dias} d</td>
@@ -487,6 +492,7 @@ export default function PanelGerencial() {
               </tbody>
             </table>
           </div>
+          <Pagination {...pagRfm.paginacion} />
           <p className="sig-kpi__sub">R: días desde la última compra (5 = ≤7 días) · F y M: quintiles de frecuencia y monto. Las ventas a consumidor final no se segmentan.</p>
         </div>
       </div>

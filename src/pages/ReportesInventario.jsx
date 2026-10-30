@@ -13,6 +13,8 @@ import {
 } from 'react-icons/hi2';
 import { supabase } from '../lib/supabase';
 import { formatUSD } from '../utils/formatters';
+import Pagination from '../components/common/Pagination';
+import usePaginacion from '../hooks/usePaginacion';
 
 const PAGE_SIZE = 1000;
 const REPORTS = [
@@ -232,6 +234,10 @@ export default function ReportesInventario() {
   );
   const alertasStock = proyeccionesFiltradas.filter(item => item.stock <= item.stockMinimo);
   const sinVentas = proyeccionesFiltradas.filter(item => item.unidades === 0);
+  const pagVentas = usePaginacion(filasVentasFiltradas, 15);
+  const pagProyecciones = usePaginacion(proyeccionesFiltradas, 20);
+  const pagAlertas = usePaginacion(alertasStock, 10);
+  const pagSinVentas = usePaginacion(sinVentas, 10);
   const productosBajoStock = calculos.proyecciones.filter(item => item.stock <= item.stockMinimo).length;
   const valorInventario = productos.reduce(
     (total, producto) => total + Number(producto.stock || 0) * Number(producto.precio_usd || 0),
@@ -487,13 +493,14 @@ export default function ReportesInventario() {
                 <table className="table">
                   <thead><tr><th>SKU</th><th>Producto</th><th>Categoría</th><th>Unidades vendidas</th><th>Stock actual</th></tr></thead>
                   <tbody>
-                    {filasVentasFiltradas.map(item => (
+                    {pagVentas.visibles.map(item => (
                       <tr key={item.id}><td>{item.sku}</td><td>{item.nombre}</td><td>{item.categoria}</td><td>{item.unidades}</td><td>{item.stock ?? '—'}</td></tr>
                     ))}
                     {!filasVentasFiltradas.length && <tr><td colSpan="5" className="table__empty">No hubo ventas de productos en este periodo</td></tr>}
                   </tbody>
                 </table>
               </div>
+              <Pagination {...pagVentas.paginacion} />
             </article>
           </div>
         )}
@@ -507,7 +514,7 @@ export default function ReportesInventario() {
               <table className="table">
                 <thead><tr><th>SKU</th><th>Producto</th><th>Stock actual</th><th>Vendidas</th><th>Promedio / día</th><th>Stock al cierre</th><th>Cobertura</th><th>Reponer</th></tr></thead>
                 <tbody>
-                  {proyeccionesFiltradas.map(item => (
+                  {pagProyecciones.visibles.map(item => (
                     <tr key={item.id}>
                       <td>{item.sku}</td><td>{item.nombre}</td><td>{item.stock}</td>
                       <td>{item.unidades}</td><td>{item.promedioDiario.toFixed(2)}</td>
@@ -520,6 +527,7 @@ export default function ReportesInventario() {
                 </tbody>
               </table>
             </div>
+            <Pagination {...pagProyecciones.paginacion} />
           </article>
         )}
 
@@ -534,13 +542,14 @@ export default function ReportesInventario() {
                 <table className="table">
                   <thead><tr><th>SKU</th><th>Producto</th><th>Stock actual</th><th>Stock mínimo</th><th>Vendidas</th></tr></thead>
                   <tbody>
-                    {alertasStock.map(item => (
+                    {pagAlertas.visibles.map(item => (
                       <tr key={item.id}><td>{item.sku}</td><td>{item.nombre}</td><td><span className="badge badge--warning">{item.stock}</span></td><td>{item.stockMinimo}</td><td>{item.unidades}</td></tr>
                     ))}
                     {!alertasStock.length && <tr><td colSpan="5" className="table__empty">No hay productos bajo el mínimo de stock</td></tr>}
                   </tbody>
                 </table>
               </div>
+              <Pagination {...pagAlertas.paginacion} />
             </article>
             <article className="card inventory-report-panel">
               <div className="inventory-report-panel-heading">
@@ -550,13 +559,14 @@ export default function ReportesInventario() {
                 <table className="table">
                   <thead><tr><th>SKU</th><th>Producto</th><th>Categoría</th><th>Stock actual</th><th>Stock mínimo</th></tr></thead>
                   <tbody>
-                    {sinVentas.map(item => (
+                    {pagSinVentas.visibles.map(item => (
                       <tr key={item.id}><td>{item.sku}</td><td>{item.nombre}</td><td>{item.categoria}</td><td>{item.stock}</td><td>{item.stockMinimo}</td></tr>
                     ))}
                     {!sinVentas.length && <tr><td colSpan="5" className="table__empty">Todos los productos tuvieron ventas en el periodo</td></tr>}
                   </tbody>
                 </table>
               </div>
+              <Pagination {...pagSinVentas.paginacion} />
             </article>
           </div>
         )}

@@ -8,6 +8,8 @@ import {
 import { supabase } from '../lib/supabase';
 import { formatUSD, formatFecha } from '../utils/formatters';
 import VistaReporte from '../components/reportes/VistaReporte';
+import Pagination from '../components/common/Pagination';
+import usePaginacion from '../hooks/usePaginacion';
 import {
   TIPOS_PROGRAMADOS, DIMENSIONES, modeloProgramado, modeloExcepciones, modeloProyecciones, modeloSolicitud,
 } from '../utils/modelosReportes';
@@ -36,6 +38,7 @@ const tooltipStyle = {
 function Programados() {
   const [lista, setLista] = useState([]);
   const [filtro, setFiltro] = useState('CIERRE_DIARIO');
+  const { visibles, paginacion } = usePaginacion(lista, 15);
   const [seleccionado, setSeleccionado] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -43,7 +46,7 @@ function Programados() {
     setLoading(true);
     const { data, error } = await supabase.from('reportes_generados')
       .select('id, codigo, titulo, periodo_desde, periodo_hasta, generado_en, origen, verificaciones')
-      .eq('codigo', filtro).order('periodo_desde', { ascending: false }).limit(60);
+      .eq('codigo', filtro).order('periodo_desde', { ascending: false }).limit(400);
     if (error) toast.error(error.message);
     setLista(data || []);
     setLoading(false);
@@ -94,7 +97,7 @@ function Programados() {
             <table className="table">
               <thead><tr><th>Reporte</th><th>Período</th><th>Generado</th><th>Controles</th><th /></tr></thead>
               <tbody>
-                {lista.map((r) => {
+                {visibles.map((r) => {
                   const fallas = (r.verificaciones || []).filter((v) => !v.ok && v.tipo !== 'info');
                   const provisional = (r.verificaciones || []).some((v) => v.tipo === 'info' && !v.ok);
                   return (
@@ -115,6 +118,7 @@ function Programados() {
               </tbody>
             </table>
           </div>
+          <Pagination {...paginacion} />
         </div>
       )}
     </>

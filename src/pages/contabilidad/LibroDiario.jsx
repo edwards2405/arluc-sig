@@ -16,6 +16,8 @@ import {
   fetchCuentasOperativas,
   ORIGENES_CONTABLES,
 } from '../../services/contabilidadService';
+import Pagination from '../../components/common/Pagination';
+import usePaginacion from '../../hooks/usePaginacion';
 
 const MODULOS = ORIGENES_CONTABLES;
 
@@ -25,6 +27,7 @@ export default function LibroDiario() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterModulo, setFilterModulo] = useState('todos');
+  const { visibles: asientosPagina, paginacion } = usePaginacion(asientos, 10);
 
   // Modal crear asiento
   const [showModal, setShowModal] = useState(false);
@@ -220,7 +223,7 @@ export default function LibroDiario() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          {asientos.map((asiento) => (
+          {asientosPagina.map((asiento) => (
             <div key={asiento.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
               {/* Encabezado del Asiento */}
               <div style={{ padding: '0.9rem 1.25rem', background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
@@ -296,6 +299,7 @@ export default function LibroDiario() {
               </div>
             </div>
           ))}
+          <Pagination {...paginacion} />
         </div>
       )}
 
