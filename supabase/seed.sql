@@ -64,13 +64,15 @@ update public.configuracion_empresa set
  where id = 'default';
 
 -- -----------------------------------------------------------------------------
--- Tasas BCV de los últimos 90 días (tendencia alcista con ruido)
+-- Tasas BCV simuladas de los últimos 90 días: devaluación de ~0,24 % diario
+-- que termina cerca de la tasa real reciente. La sincronización automática
+-- reemplaza la de hoy por la oficial al iniciar la app.
 -- -----------------------------------------------------------------------------
 insert into public.tasas_cambio (fecha_registro, tasa_usd_bs, tasa_eur_bs, fuente, registrado_por)
 select d::date,
-       round((420 + (89 - (current_date - d::date)) * 0.9 + sin((current_date - d::date)::numeric) * 1.5)::numeric, 4),
-       round(((420 + (89 - (current_date - d::date)) * 0.9) * 1.08)::numeric, 4),
-       'BCV',
+       round((885 * power(0.9976, current_date - d::date) * (1 + sin((current_date - d::date)::numeric) * 0.002))::numeric, 4),
+       round((885 * 1.11 * power(0.9976, current_date - d::date))::numeric, 4),
+       'BCV (simulada)',
        'a0000000-0000-4000-8000-000000000001'
   from generate_series(current_date - 89, current_date, interval '1 day') as d;
 

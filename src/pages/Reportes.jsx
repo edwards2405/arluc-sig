@@ -28,7 +28,7 @@ import {
 // ── Date preset helpers ──────────────────────────────────────────
 function getPreset(preset) {
   const now = new Date();
-  const pad = d => d.toISOString().split('T')[0];
+  const pad = d => d.toLocaleDateString('en-CA'); // fecha local (Venezuela), no UTC
   switch (preset) {
     case 'hoy':
       return { desde: pad(now), hasta: pad(now) };
@@ -562,7 +562,7 @@ export default function Reportes() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
 
-    const fechaStr = new Date().toISOString().split('T')[0];
+    const fechaStr = new Date().toLocaleDateString('en-CA');
     XLSX.writeFile(wb, `Inventario_ARLUC_${fechaStr}.xlsx`);
     toast.success('Inventario Excel (.xlsx) descargado correctamente');
   }

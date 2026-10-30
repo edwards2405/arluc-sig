@@ -142,12 +142,13 @@ export default function PanelGerencial() {
       supabase.rpc('sig_mapa_ventas', args),
       supabase.rpc('sig_analisis_abc', args),
       supabase.rpc('sig_clientes_rfm', { p_hasta: rango.hasta }),
+      supabase.rpc('sig_alertas_tasa'),
     ]);
     const error = llamadas.find((r) => r.error)?.error;
     if (error) toast.error('Error cargando indicadores: ' + error.message);
-    const [resumen, diarias, metas, proyeccion, alertas, mapa, abc, rfm] = llamadas.map((r) => r.data);
+    const [resumen, diarias, metas, proyeccion, alertas, mapa, abc, rfm, alertasTasa] = llamadas.map((r) => r.data);
     setDatos({ resumen, diarias: diarias || [], metas: metas || [], proyeccion: proyeccion || [],
-      alertas: alertas || [], mapa: mapa || [], abc: abc || [], rfm: rfm || [] });
+      alertas: [...(alertasTasa || []), ...(alertas || [])], mapa: mapa || [], abc: abc || [], rfm: rfm || [] });
     setLoading(false);
   }, [rango.desde, rango.hasta, anio, mes]);
 

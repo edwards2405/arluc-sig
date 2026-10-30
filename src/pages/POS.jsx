@@ -2,9 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { METODOS_PAGO, METODOS_INICIAL_CASHEA } from '../utils/constants';
-import { formatTasa, formatUSD } from '../utils/formatters';
+import { formatTasa, formatUSD, formatFecha } from '../utils/formatters';
 import toast from 'react-hot-toast';
-import { fetchTasaBCV } from '../services/bcvService';
+import { sincronizarTasaBCV } from '../services/bcvService';
 import { HiOutlineArrowPath } from 'react-icons/hi2';
 
 // Subcomponentes modulares de Caja
@@ -186,7 +186,8 @@ export default function POS() {
   // Parámetros fiscales (el servidor recalcula; aquí solo se muestran)
   const [fiscal, setFiscal] = useState({ alicuota_iva: 16, alicuota_igtf: 3, contribuyente_especial: true });
 
-  // Cargar tasa de hoy y parámetros fiscales al montar
+  // Cargar tasa de hoy y parámetros fiscales al montar; recargar la tasa cuando
+  // la app la sincroniza (evento) y cada 5 minutos por si cambió en otra caja.
   useEffect(() => {
     loadTasaHoy();
     supabase
@@ -195,12 +196,20 @@ export default function POS() {
       .eq('id', 'default')
       .maybeSingle()
       .then(({ data }) => data && setFiscal(data));
+    window.addEventListener('arluc_tasa_actualizada', loadTasaHoy);
+    const intervalo = setInterval(loadTasaHoy, 5 * 60 * 1000);
+    return () => {
+      window.removeEventListener('arluc_tasa_actualizada', loadTasaHoy);
+      clearInterval(intervalo);
+    };
   }, []);
 
+  // Tasa vigente HOY (puede existir ya la del día siguiente si el BCV la adelantó)
   async function loadTasaHoy() {
     const { data } = await supabase
       .from('tasas_cambio')
       .select('*')
+      .lte('fecha_registro', new Date().toLocaleDateString('en-CA'))
       .order('fecha_registro', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -208,31 +217,15 @@ export default function POS() {
   }
 
   async function sincronizarBCV() {
+    toast.loading('Consultando la tasa oficial del BCV...', { id: 'bcv-sync' });
     try {
-      toast.loading('Consultando API BCV...', { id: 'bcv-sync' });
-      const bcv = await fetchTasaBCV();
-      if (!bcv.tasa_usd) throw new Error('No se obtuvo tasa');
-      const valor = parseFloat(bcv.tasa_usd.toFixed(2));
-      const hoy = new Date().toISOString().split('T')[0];
-
-      const { data: existing } = await supabase
-        .from('tasas_cambio')
-        .select('id')
-        .eq('fecha_registro', hoy)
-        .maybeSingle();
-
-      if (existing) {
-        await supabase
-          .from('tasas_cambio')
-          .update({ tasa_usd_bs: valor, registrado_por: profile?.id })
-          .eq('id', existing.id);
-      } else {
-        await supabase
-          .from('tasas_cambio')
-          .insert({ tasa_usd_bs: valor, fecha_registro: hoy, registrado_por: profile?.id });
-      }
+      const resultado = await sincronizarTasaBCV();
       await loadTasaHoy();
-      toast.success(`Tasa BCV actualizada: Bs ${valor.toFixed(2)}`, { id: 'bcv-sync' });
+      if (resultado.estado === 'ERROR' || resultado.estado === 'BLOQUEADA') {
+        toast.error(`Tasa BCV: ${resultado.detalle}`, { id: 'bcv-sync' });
+      } else {
+        toast.success('Tasa BCV al día', { id: 'bcv-sync' });
+      }
     } catch (e) {
       toast.error(`Error al sincronizar BCV: ${e.message}`, { id: 'bcv-sync' });
     }
@@ -619,8 +612,11 @@ export default function POS() {
         </div>
         {tasaHoy && (
           <div className="pos-tasa" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span>
-              Tasa BCV: <strong>Bs {formatTasa(tasaHoy.tasa_usd_bs)}</strong>
+            <span title={`Fuente: ${tasaHoy.fuente || 'BCV'}`}>
+              Tasa BCV {formatFecha(tasaHoy.fecha_registro)}: <strong>{formatTasa(tasaHoy.tasa_usd_bs)}</strong>
+              {tasaHoy.fecha_registro !== new Date().toLocaleDateString('en-CA') && (
+                <span style={{ color: 'var(--danger)', marginLeft: '0.4rem' }}>⚠️ no es la de hoy</span>
+              )}
             </span>
             <button className="btn btn--ghost btn--xs" onClick={sincronizarBCV} title="Actualizar tasa desde BCV">
               <HiOutlineArrowPath />

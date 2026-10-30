@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { formatTasa, formatFecha } from '../utils/formatters';
-import { fetchTasaBCV } from '../services/bcvService';
+import { formatTasa, formatFecha, parseFecha } from '../utils/formatters';
+import { fetchTasaBCV, sincronizarTasaBCV } from '../services/bcvService';
 import toast from 'react-hot-toast';
 import Pagination from '../components/common/Pagination';
 import {
@@ -16,17 +16,22 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 
 export default function TasaCambio() {
   const { profile } = useAuth();
+  const esAdmin = profile?.rol === 'admin';
   const [tasas, setTasas] = useState([]);
+  const [bitacora, setBitacora] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncingBCV, setSyncingBCV] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [nuevaTasa, setNuevaTasa] = useState('');
+  const [fechaManual, setFechaManual] = useState(() => new Date().toLocaleDateString('en-CA'));
   const [bcvData, setBcvData] = useState(null);
 
   useEffect(() => {
     loadTasas();
     checkBCVRate();
+    window.addEventListener('arluc_tasa_actualizada', loadTasas);
+    return () => window.removeEventListener('arluc_tasa_actualizada', loadTasas);
   }, []);
 
   async function checkBCVRate() {
@@ -40,61 +45,40 @@ export default function TasaCambio() {
 
   async function loadTasas() {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('tasas_cambio')
-      .select('*, usuarios!tasas_cambio_registrado_por_fkey(nombre_completo)')
-      .order('fecha_registro', { ascending: false })
-      .limit(90);
+    const [{ data, error }, { data: sync }] = await Promise.all([
+      supabase
+        .from('tasas_cambio')
+        .select('*, usuarios!tasas_cambio_registrado_por_fkey(nombre_completo)')
+        .order('fecha_registro', { ascending: false })
+        .limit(90),
+      supabase.from('sincronizaciones_bcv').select('*').order('fecha', { ascending: false }).limit(8),
+    ]);
 
     if (error) {
       console.error('Error loading tasas:', error);
     }
     setTasas(data || []);
+    setBitacora(sync || []);
     setLoading(false);
   }
 
+  function informarResultado(resultado) {
+    const mensajes = {
+      CREADA: `Tasa registrada: ${formatTasa(resultado.tasa_usd)}`,
+      ACTUALIZADA: `Tasa actualizada a ${formatTasa(resultado.tasa_usd)}`,
+      SIN_CAMBIOS: 'La tasa ya estaba al día',
+      RECIENTE: 'La tasa se sincronizó hace menos de un minuto',
+    };
+    if (mensajes[resultado.estado]) toast.success(mensajes[resultado.estado]);
+    else toast.error(resultado.detalle || 'No se pudo actualizar la tasa');
+  }
+
+  // El servidor consulta la API, valida la variación y registra la tasa.
   async function handleSincronizarBCV() {
     setSyncingBCV(true);
     try {
-      const data = await fetchTasaBCV();
-      setBcvData(data);
-      if (!data.tasa_usd || data.tasa_usd <= 0) {
-        throw new Error('Tasa BCV inválida recibida');
-      }
-
-      const valorTasa = parseFloat(data.tasa_usd.toFixed(2));
-      const hoy = new Date().toISOString().split('T')[0];
-
-      // Insert or update for today
-      const { data: existingRate } = await supabase
-        .from('tasas_cambio')
-        .select('id')
-        .eq('fecha_registro', hoy)
-        .maybeSingle();
-
-      if (existingRate) {
-        const { error: updErr } = await supabase
-          .from('tasas_cambio')
-          .update({
-            tasa_usd_bs: valorTasa,
-            registrado_por: profile.id,
-          })
-          .eq('id', existingRate.id);
-        if (updErr) throw updErr;
-        toast.success(`Tasa del día actualizada a Bs ${valorTasa.toFixed(2)} (BCV)`);
-      } else {
-        const { error: insErr } = await supabase
-          .from('tasas_cambio')
-          .insert({
-            tasa_usd_bs: valorTasa,
-            fecha_registro: hoy,
-            registrado_por: profile.id,
-          });
-        if (insErr) throw insErr;
-        toast.success(`Tasa BCV sincronizada y registrada: Bs ${valorTasa.toFixed(2)}`);
-      }
-
-      await loadTasas();
+      informarResultado(await sincronizarTasaBCV());
+      await Promise.all([loadTasas(), checkBCVRate()]);
     } catch (error) {
       toast.error(`Error al sincronizar BCV: ${error.message}`);
     } finally {
@@ -102,52 +86,33 @@ export default function TasaCambio() {
     }
   }
 
+  // Corrección manual (solo admin), validada por el servidor.
   async function handleSubmit(e) {
     e.preventDefault();
     if (!nuevaTasa || parseFloat(nuevaTasa) <= 0) {
       toast.error('Ingrese una tasa válida');
       return;
     }
-    const valor = parseFloat(parseFloat(nuevaTasa).toFixed(2));
-    const hoy = new Date().toISOString().split('T')[0];
-
-    try {
-      const { data: existingRate } = await supabase
-        .from('tasas_cambio')
-        .select('id')
-        .eq('fecha_registro', hoy)
-        .maybeSingle();
-
-      if (existingRate) {
-        const { error } = await supabase
-          .from('tasas_cambio')
-          .update({ tasa_usd_bs: valor, registrado_por: profile.id })
-          .eq('id', existingRate.id);
-        if (error) throw error;
-        toast.success('Tasa actualizada correctamente');
-      } else {
-        const { error } = await supabase
-          .from('tasas_cambio')
-          .insert({
-            tasa_usd_bs: valor,
-            fecha_registro: hoy,
-            registrado_por: profile.id,
-          });
-        if (error) throw error;
-        toast.success('Tasa registrada exitosamente');
-      }
-      setShowForm(false);
-      setNuevaTasa('');
-      loadTasas();
-    } catch (error) {
+    const { data, error } = await supabase.rpc('registrar_tasa_manual', {
+      p_fecha: fechaManual,
+      p_usd: parseFloat(nuevaTasa),
+    });
+    if (error) {
       toast.error(error.message);
+      return;
     }
+    informarResultado(data);
+    setShowForm(false);
+    setNuevaTasa('');
+    loadTasas();
+    window.dispatchEvent(new CustomEvent('arluc_tasa_actualizada'));
   }
 
-  const hoyFecha = new Date().toISOString().split('T')[0];
+  const hoyFecha = new Date().toLocaleDateString('en-CA');
   const tasaHoy = tasas.find(t => t.fecha_registro === hoyFecha);
+  const tasaAnterior = tasas.find(t => t.fecha_registro < hoyFecha);
   const chartData = [...tasas].reverse().map(t => ({
-    fecha: new Date(t.fecha_registro).toLocaleDateString('es-VE', { day: '2-digit', month: 'short' }),
+    fecha: parseFecha(t.fecha_registro).toLocaleDateString('es-VE', { day: '2-digit', month: 'short' }),
     tasa: parseFloat(t.tasa_usd_bs),
   }));
 
@@ -165,7 +130,7 @@ export default function TasaCambio() {
       <div className="page__header">
         <div>
           <h1 className="page__title">Tasa de Cambio</h1>
-          <p className="page__subtitle">Control de tasas de cambio oficial USD/Bs y sincronización con el BCV</p>
+          <p className="page__subtitle">La tasa oficial se sincroniza sola desde el BCV cada 30 minutos y al abrir el sistema</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button
@@ -177,9 +142,11 @@ export default function TasaCambio() {
             <HiOutlineArrowPath className={syncingBCV ? 'spin' : ''} />
             {syncingBCV ? 'Sincronizando...' : 'Sincronizar con BCV'}
           </button>
-          <button className="btn btn--primary" onClick={() => { setNuevaTasa(tasaHoy ? tasaHoy.tasa_usd_bs : (bcvData?.tasa_usd || '')); setShowForm(true); }}>
-            <HiOutlinePlus /> {tasaHoy ? 'Ajustar Manualmente' : 'Registrar Manualmente'}
-          </button>
+          {esAdmin && (
+            <button className="btn btn--primary" onClick={() => { setNuevaTasa(tasaHoy ? tasaHoy.tasa_usd_bs : (bcvData?.tasa_usd || '')); setShowForm(true); }}>
+              <HiOutlinePlus /> Corrección manual
+            </button>
+          )}
         </div>
       </div>
 
@@ -206,14 +173,14 @@ export default function TasaCambio() {
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: '0.75rem', color: '#A3A3A3', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tasa Oficial BCV</div>
                 <div style={{ fontSize: '1.35rem', fontWeight: '800', color: '#22C55E' }}>
-                  Bs {formatTasa(bcvData.tasa_usd)}
+                  {formatTasa(bcvData.tasa_usd)}
                 </div>
               </div>
               {bcvData.tasa_eur > 0 && (
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: '0.75rem', color: '#A3A3A3', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Euro BCV</div>
                   <div style={{ fontSize: '1.15rem', fontWeight: '700', color: '#E5E5E5' }}>
-                    Bs {formatTasa(bcvData.tasa_eur)}
+                    {formatTasa(bcvData.tasa_eur)}
                   </div>
                 </div>
               )}
@@ -222,7 +189,7 @@ export default function TasaCambio() {
                 onClick={handleSincronizarBCV}
                 disabled={syncingBCV}
               >
-                Aplicar al Sistema
+                Sincronizar ahora
               </button>
             </div>
           </div>
@@ -238,21 +205,21 @@ export default function TasaCambio() {
           <div className="stat-card__content">
             <span className="stat-card__label">Tasa del Sistema Hoy</span>
             <span className="stat-card__value">
-              {tasaHoy ? `Bs ${formatTasa(tasaHoy.tasa_usd_bs)}` : '⚠️ Sin registrar'}
+              {tasaHoy ? `${formatTasa(tasaHoy.tasa_usd_bs)}` : '⚠️ Sin registrar'}
             </span>
-            <span className="stat-card__sub">{formatFecha(new Date())}</span>
+            <span className="stat-card__sub">{formatFecha(new Date())}{tasaHoy && ` · ${tasaHoy.fuente}`}</span>
           </div>
         </div>
 
-        {tasas.length >= 2 && (
+        {tasaAnterior && (
           <div className="stat-card">
             <div className="stat-card__icon stat-card__icon--info">
               <HiOutlineCurrencyDollar />
             </div>
             <div className="stat-card__content">
               <span className="stat-card__label">Tasa Anterior</span>
-              <span className="stat-card__value">Bs {formatTasa(tasas[tasaHoy ? 1 : 0]?.tasa_usd_bs)}</span>
-              <span className="stat-card__sub">{formatFecha(tasas[tasaHoy ? 1 : 0]?.fecha_registro)}</span>
+              <span className="stat-card__value">{formatTasa(tasaAnterior.tasa_usd_bs)}</span>
+              <span className="stat-card__sub">{formatFecha(tasaAnterior.fecha_registro)}</span>
             </div>
           </div>
         )}
@@ -289,6 +256,7 @@ export default function TasaCambio() {
               <tr>
                 <th>Fecha</th>
                 <th>Tasa (Bs/$)</th>
+                <th>Fuente</th>
                 <th>Registrado por</th>
                 <th>Equivalencia $100</th>
               </tr>
@@ -297,12 +265,13 @@ export default function TasaCambio() {
               {tasas.slice((currentPage - 1) * 20, currentPage * 20).map(t => (
                 <tr key={t.id}>
                   <td>{formatFecha(t.fecha_registro)}</td>
-                  <td><strong style={{ color: '#F5F5F5' }}>{formatTasa(t.tasa_usd_bs)}</strong></td>
-                  <td>{t.usuarios?.nombre_completo || 'Sistema / BCV'}</td>
+                  <td><strong>{formatTasa(t.tasa_usd_bs)}</strong></td>
+                  <td>{t.fuente}</td>
+                  <td>{t.usuarios?.nombre_completo || 'Sistema (automático)'}</td>
                   <td>Bs {(parseFloat(t.tasa_usd_bs) * 100).toLocaleString('es-VE', { minimumFractionDigits: 2 })}</td>
                 </tr>
               ))}
-              {tasas.length === 0 && <tr><td colSpan="4" className="table__empty">Sin registros</td></tr>}
+              {tasas.length === 0 && <tr><td colSpan="5" className="table__empty">Sin registros</td></tr>}
             </tbody>
           </table>
         </div>
@@ -314,19 +283,54 @@ export default function TasaCambio() {
         />
       </div>
 
+      {/* Bitácora de sincronización */}
+      <div className="card" style={{ marginTop: '1.5rem' }}>
+        <h3 className="card__title">Bitácora de sincronización automática</h3>
+        <div className="table-container">
+          <table className="table">
+            <thead>
+              <tr><th>Momento</th><th>Origen</th><th>Resultado</th><th>Tasa</th><th>Detalle</th></tr>
+            </thead>
+            <tbody>
+              {bitacora.map(b => (
+                <tr key={b.id}>
+                  <td>{formatFecha(b.fecha, true)}</td>
+                  <td>{b.origen === 'CRON' ? 'Servidor (cada 30 min)' : b.origen === 'APP' ? 'Al abrir la app' : 'Manual'}</td>
+                  <td>
+                    <span className={`badge ${['ERROR', 'BLOQUEADA'].includes(b.estado) ? 'badge--danger' : 'badge--success'}`}>
+                      {b.estado.replace('_', ' ')}
+                    </span>
+                  </td>
+                  <td>{b.tasa_usd ? formatTasa(b.tasa_usd) : '—'}</td>
+                  <td style={{ color: 'var(--text-secondary)' }}>{b.detalle || '—'}</td>
+                </tr>
+              ))}
+              {bitacora.length === 0 && <tr><td colSpan="5" className="table__empty">Aún no hay sincronizaciones</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* New Rate Form Modal */}
       {showForm && (
         <div className="modal-overlay" onClick={() => setShowForm(false)}>
           <div className="modal modal--sm" onClick={e => e.stopPropagation()}>
             <div className="modal__header">
-              <h2>{tasaHoy ? 'Actualizar' : 'Registrar'} Tasa del Día</h2>
+              <h2>Corrección manual de tasa</h2>
             </div>
             <form onSubmit={handleSubmit} className="modal__form">
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                Úsela solo si la sincronización automática falla. No se puede cambiar la tasa de un día con facturas emitidas.
+              </p>
+              <div className="form-group">
+                <label>Fecha valor</label>
+                <input type="date" value={fechaManual} max={hoyFecha} onChange={e => setFechaManual(e.target.value)} required />
+              </div>
               <div className="form-group">
                 <label>Tasa USD → Bs</label>
                 <input
                   type="number"
-                  step="0.01"
+                  step="0.0001"
                   min="0"
                   value={nuevaTasa}
                   onChange={e => setNuevaTasa(e.target.value)}
@@ -345,12 +349,12 @@ export default function TasaCambio() {
                 </button>
               )}
               {nuevaTasa && parseFloat(nuevaTasa) > 0 && (
-                <p style={{ color: '#A3A3A3', fontSize: '0.9rem' }}>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                   $1.00 = Bs {parseFloat(nuevaTasa).toFixed(4)} | $10 = Bs {(parseFloat(nuevaTasa) * 10).toFixed(2)}
                 </p>
               )}
               <button type="submit" className="btn btn--primary btn--full">
-                {tasaHoy ? 'Guardar Actualización' : 'Registrar Tasa'}
+                Guardar tasa
               </button>
             </form>
           </div>

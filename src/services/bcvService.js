@@ -1,3 +1,5 @@
+import { supabase } from '../lib/supabase';
+
 /**
  * Servicio para consultar la API del Banco Central de Venezuela
  * Repositorio: https://github.com/Chitty400/chitty-bcv-api
@@ -26,4 +28,18 @@ export async function fetchTasaBCV() {
     console.error('Error fetching BCV rate:', error);
     throw error;
   }
+}
+
+/**
+ * Pide al servidor sincronizar la tasa oficial. El servidor consulta la API,
+ * valida la variación y registra la tasa; el navegador no envía montos.
+ * Notifica a las pantallas abiertas (POS, Tasa de Cambio) con un evento.
+ */
+export async function sincronizarTasaBCV() {
+  const { data, error } = await supabase.rpc('sincronizar_tasa_bcv');
+  if (error) throw error;
+  if (data?.estado !== 'RECIENTE' && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('arluc_tasa_actualizada', { detail: data }));
+  }
+  return data;
 }

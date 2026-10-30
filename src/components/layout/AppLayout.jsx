@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import ThemeToggle from '../common/ThemeToggle';
 import { HiOutlineBars3 } from 'react-icons/hi2';
+import { sincronizarTasaBCV } from '../../services/bcvService';
 
 export default function AppLayout() {
   // Mobile drawer open state
@@ -10,6 +11,14 @@ export default function AppLayout() {
   // Desktop collapsed state
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
+
+  // Tasa BCV: se sincroniza al abrir la app y cada 15 minutos (además del cron del servidor)
+  useEffect(() => {
+    const sincronizar = () => sincronizarTasaBCV().catch((e) => console.warn('Sincronización BCV:', e.message));
+    sincronizar();
+    const intervalo = setInterval(sincronizar, 15 * 60 * 1000);
+    return () => clearInterval(intervalo);
+  }, []);
 
   // Close mobile drawer when route changes
   useEffect(() => {
