@@ -37,7 +37,7 @@ export default function Login() {
         <div className="login-card__header">
           <img src="/logo-arluc.jpg" alt="ARLUC" className="login-card__logo" />
           <h1 className="login-card__title">ARLUC System</h1>
-          <p className="login-card__subtitle">Sistema de Facturación e Inventario</p>
+          <p className="login-card__subtitle">Sistema ERP ARLUC</p>
         </div>
 
         <form onSubmit={handleSubmit} className="login-card__form">
