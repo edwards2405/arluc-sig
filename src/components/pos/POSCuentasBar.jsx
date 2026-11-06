@@ -1,8 +1,9 @@
 import { HiOutlinePlus } from 'react-icons/hi2';
-import { formatUSD } from '../../utils/formatters';
+import { formatMonto } from '../../utils/formatters';
 
 export default function POSCuentasBar({
   cuentas,
+  tasa,
   cuentaActivaId,
   onSelectCuenta,
   onAgregarCuenta,
@@ -31,7 +32,7 @@ export default function POSCuentasBar({
               </span>
               {itemsCount > 0 ? (
                 <span className="pos-cuenta-tab__badge">
-                  {itemsCount} art. • {formatUSD(totalUSD)}
+                  {itemsCount} art. • {formatMonto(totalUSD, tasa)}
                 </span>
               ) : (
                 <span className="pos-cuenta-tab__badge" style={{ opacity: 0.6 }}>Vacía</span>

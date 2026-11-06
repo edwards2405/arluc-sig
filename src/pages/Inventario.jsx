@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { formatUSD, formatFecha } from '../utils/formatters';
+import { formatMonto, formatFecha } from '../utils/formatters';
 import toast from 'react-hot-toast';
 import Pagination from '../components/common/Pagination';
 import {
@@ -234,7 +234,7 @@ export default function Inventario() {
                 <th>SKU</th>
                 <th>Nombre</th>
                 <th>Categoría</th>
-                <th>Precio USD</th>
+                <th>Precio (Bs)</th>
                 <th>Stock</th>
                 <th>Estado</th>
                 <th>Acciones</th>
@@ -246,7 +246,7 @@ export default function Inventario() {
                   <td><code>{p.sku}</code></td>
                   <td>{p.nombre}</td>
                   <td>{p.categorias?.nombre || '—'}</td>
-                  <td>{formatUSD(p.precio_usd)}</td>
+                  <td>{formatMonto(p.precio_usd)}</td>
                   <td>
                     <span className={`badge ${p.stock <= p.stock_minimo ? (p.stock === 0 ? 'badge--danger' : 'badge--warning') : 'badge--success'}`}>
                       {p.stock}
@@ -342,6 +342,7 @@ export default function Inventario() {
                     placeholder="0.00"
                     required
                   />
+                  {Number(form.precio_usd) > 0 && <small>≈ {formatMonto(form.precio_usd)}</small>}
                 </div>
                 <div className="form-group">
                   <label>Stock Actual</label>

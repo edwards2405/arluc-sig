@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { formatUSD, formatBs, formatFecha, getWhatsAppUrl, getPhoneCallUrl } from '../../../utils/formatters';
+import { formatMonto, formatDolares, formatFecha, getWhatsAppUrl, getPhoneCallUrl } from '../../../utils/formatters';
 import { HiOutlineExclamationTriangle } from 'react-icons/hi2';
 import { FaWhatsapp, FaPhone } from 'react-icons/fa';
 import Pagination from '../../common/Pagination';
@@ -39,10 +39,10 @@ export default function CxCOverdueReport({ cuentas = [], config = {}, tasaValor 
           </div>
           <div style={{ textAlign: 'right' }}>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Total Saldo en Mora:</span>
-            <div style={{ fontSize: '1.35rem', fontWeight: 900, color: '#EF4444' }}>{formatUSD(totalVencidoUSD)}</div>
+            <div style={{ fontSize: '1.35rem', fontWeight: 900, color: '#EF4444' }}>{formatMonto(totalVencidoUSD)}</div>
             {totalRecargosUSD > 0 && (
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                Incluye +{formatUSD(totalRecargosUSD)} de mora
+                Incluye +{formatMonto(totalRecargosUSD)} de mora
               </span>
             )}
           </div>
@@ -77,7 +77,7 @@ export default function CxCOverdueReport({ cuentas = [], config = {}, tasaValor 
                   const tel = c.cliente?.telefono;
                   const phoneUrl = tel ? getPhoneCallUrl(tel) : '';
                   const msgWa = encodeURIComponent(
-                    `Estimado(a) ${c.cliente?.nombre || 'cliente'}, le saludamos de Comercializadora ARLUC. Le recordamos que su factura ${c.numero_factura} posee un saldo vencido de $${c.saldoTotalUSD.toFixed(2)} USD con ${c.diasTranscurridos} días transcurridos. Agradecemos coordinar su pago a la brevedad.`
+                    `Estimado(a) ${c.cliente?.nombre || 'cliente'}, le saludamos de Comercializadora ARLUC. Le recordamos que su factura ${c.numero_factura} posee un saldo vencido de ${formatMonto(c.saldoTotalUSD)} con ${c.diasTranscurridos} días transcurridos. Agradecemos coordinar su pago a la brevedad.`
                   );
                   const whatsappUrl = tel ? `${getWhatsAppUrl(tel)}?text=${msgWa}` : '';
 
@@ -100,20 +100,20 @@ export default function CxCOverdueReport({ cuentas = [], config = {}, tasaValor 
                           +{c.diasTranscurridos} días
                         </span>
                       </td>
-                      <td style={{ textAlign: 'right' }}>{formatUSD(c.montoOriginalUSD)}</td>
+                      <td style={{ textAlign: 'right' }}>{formatMonto(c.montoOriginalUSD)}</td>
                       <td style={{ textAlign: 'right', color: '#EF4444', fontWeight: 600 }}>
-                        {c.recargoUSD > 0 ? `+${formatUSD(c.recargoUSD)}` : '—'}
+                        {c.recargoUSD > 0 ? `+${formatMonto(c.recargoUSD)}` : '—'}
                       </td>
                       <td style={{ textAlign: 'right', color: '#10B981' }}>
-                        {c.totalAbonadoUSD > 0 ? formatUSD(c.totalAbonadoUSD) : '—'}
+                        {c.totalAbonadoUSD > 0 ? formatMonto(c.totalAbonadoUSD) : '—'}
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <strong style={{ color: '#EF4444', fontSize: '1rem' }}>
-                          {formatUSD(c.saldoTotalUSD)}
+                          {formatMonto(c.saldoTotalUSD)}
                         </strong>
                         {tasaValor > 0 && (
                           <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                            {formatBs(c.saldoTotalUSD * tasaValor)}
+                            Ref. {formatDolares(c.saldoTotalUSD)}
                           </div>
                         )}
                       </td>

@@ -1,7 +1,38 @@
+// Tasa BCV vigente para mostrar en Bs los montos que el sistema guarda en USD.
+// La carga AppLayout antes de mostrar las pantallas.
+let tasaPantalla = 0;
+
+export function setTasaPantalla(tasa) {
+  tasaPantalla = Number(tasa) || 0;
+}
+
+export function getTasaPantalla() {
+  return tasaPantalla;
+}
+
 /**
- * Format a number as USD currency
+ * Muestra en Bs un monto guardado en USD. Sin `tasa` usa la vigente; un
+ * documento pasa la suya para no revalorizar lo ya emitido.
  */
-export function formatUSD(amount) {
+export function formatMonto(amountUSD, tasa = tasaPantalla) {
+  const t = Number(tasa) || 0;
+  return t > 0 ? formatBs((Number(amountUSD) || 0) * t) : formatDolares(amountUSD);
+}
+
+/** Pasa a Bs los montos que vienen escritos en USD dentro de un texto de la base de datos. */
+export function montosEnBs(texto) {
+  return String(texto ?? '').replace(/(-?\d+(?:\.\d+)?) USD/g, (_, n) => formatMonto(Number(n)));
+}
+
+/** Etiqueta corta de un eje de gráfico cuyos datos están en USD. */
+export function ejeBs(usd) {
+  return (Number(usd) * (tasaPantalla || 1)).toLocaleString('es-VE', { notation: 'compact', maximumFractionDigits: 1 });
+}
+
+/**
+ * Format a number as USD currency: solo referencias y operaciones en divisas
+ */
+export function formatDolares(amount) {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',

@@ -19,7 +19,7 @@ import { formatFecha as formatearFecha } from '../../utils/formatters';
 
 export default function EstadosFinancieros() {
   const [activeTab, setActiveTab] = useState('resultados'); // 'resultados' | 'balance'
-  const [moneda, setMoneda] = useState('USD'); // 'USD' | 'VES'
+  const [moneda, setMoneda] = useState('VES'); // 'VES' | 'USD'
   const [loading, setLoading] = useState(true);
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
@@ -139,7 +139,7 @@ export default function EstadosFinancieros() {
     const periodo = `${fechaDesde ? formatearFecha(fechaDesde) : 'Inicio de operaciones'} al ${fechaHasta ? formatearFecha(fechaHasta) : 'día de hoy'}`;
     const calidad = {
       fuente: 'Libro mayor (asientos contables generados por la operación, inmutables).',
-      confiabilidad: bg.cuadrado ? 'Partida doble verificada: Activo = Pasivo + Patrimonio.' : `Descuadre de ${fmt(bg.diferencia)}.`,
+      confiabilidad: bg.cuadrado ? 'Partida doble verificada: Activo = Pasivo + Patrimonio.' : `Descuadre de ${fmt(tActivos - tPasivoPatrimonio)}.`,
       oportunidad: 'Calculado en el momento de la consulta con los datos al día.',
     };
 
@@ -243,18 +243,6 @@ export default function EstadosFinancieros() {
           >
             <button
               type="button"
-              onClick={() => setMoneda('USD')}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold transition"
-              style={{
-                minHeight: 38,
-                backgroundColor: moneda === 'USD' ? 'var(--primary)' : 'transparent',
-                color: moneda === 'USD' ? '#000' : 'var(--text-secondary)',
-              }}
-            >
-              USD ($)
-            </button>
-            <button
-              type="button"
               onClick={() => setMoneda('VES')}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold transition"
               style={{
@@ -264,6 +252,18 @@ export default function EstadosFinancieros() {
               }}
             >
               VES (Bs.)
+            </button>
+            <button
+              type="button"
+              onClick={() => setMoneda('USD')}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+              style={{
+                minHeight: 38,
+                backgroundColor: moneda === 'USD' ? 'var(--primary)' : 'transparent',
+                color: moneda === 'USD' ? '#000' : 'var(--text-secondary)',
+              }}
+            >
+              USD ($)
             </button>
           </div>
 
@@ -909,7 +909,7 @@ export default function EstadosFinancieros() {
                     TOTAL PASIVO + PATRIMONIO
                   </span>
                   <span className="text-[11px]" style={{ color: bg.cuadrado ? 'var(--success)' : 'var(--danger)' }}>
-                    {bg.cuadrado ? '✓ Coincide exactamente con el Activo' : `Descuadre: ${fmt(bg.diferencia)}`}
+                    {bg.cuadrado ? '✓ Coincide exactamente con el Activo' : `Descuadre: ${fmt(tActivos - tPasivoPatrimonio)}`}
                   </span>
                 </div>
                 <span className="font-bold text-base" style={{ color: 'var(--primary)' }}>

@@ -129,22 +129,16 @@ export default function LibroMayor() {
   const { visibles: movimientosPagina, paginacion } = usePaginacion(movimientosFiltrados, 25);
 
   // Totales de movimientos filtrados
-  const { totalDebe, totalHaber, totalDebeVes, totalHaberVes } = useMemo(() => {
-    let totalDebeCentimos = 0;
-    let totalHaberCentimos = 0;
+  const { totalDebeVes, totalHaberVes } = useMemo(() => {
     let totalDebeVesCentimos = 0;
     let totalHaberVesCentimos = 0;
 
     movimientosFiltrados.forEach((m) => {
-      totalDebeCentimos += Math.round(Number(m.debe || 0) * 100);
-      totalHaberCentimos += Math.round(Number(m.haber || 0) * 100);
       totalDebeVesCentimos += Math.round(Number(m.debe_ves || 0) * 100);
       totalHaberVesCentimos += Math.round(Number(m.haber_ves || 0) * 100);
     });
 
     return {
-      totalDebe: totalDebeCentimos / 100,
-      totalHaber: totalHaberCentimos / 100,
       totalDebeVes: totalDebeVesCentimos / 100,
       totalHaberVes: totalHaberVesCentimos / 100,
     };
@@ -153,15 +147,10 @@ export default function LibroMayor() {
   const movimientosAlCorte = movimientosConSaldo.filter(m =>
     !fechaHasta || (m.asientos_contables?.fecha && m.asientos_contables.fecha <= fechaHasta)
   );
-  const saldoFinal = movimientosAlCorte.length
-    ? movimientosAlCorte[movimientosAlCorte.length - 1].saldoAcumulado
-    : 0;
   const saldoFinalVes = movimientosAlCorte.length
     ? movimientosAlCorte[movimientosAlCorte.length - 1].saldoAcumuladoVes
     : 0;
 
-  const formatMoney = (amount) =>
-    `$${Number(amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const formatBolivares = (amount) =>
     `Bs. ${Number(amount || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -171,9 +160,6 @@ export default function LibroMayor() {
       fecha: m.asientos_contables?.fecha,
       numero: m.asientos_contables?.numero,
       glosa: m.asientos_contables?.glosa,
-      debe: Number(m.debe || 0),
-      haber: Number(m.haber || 0),
-      saldo: Number(m.saldoAcumulado || 0),
       debeVes: Number(m.debe_ves || 0),
       haberVes: Number(m.haber_ves || 0),
       saldoVes: Number(m.saldoAcumuladoVes || 0),
@@ -182,9 +168,9 @@ export default function LibroMayor() {
     return {
       titulo: `Libro Mayor · ${cuentaActiva.codigo} ${cuentaActiva.nombre}`,
       subtitulo: `Movimientos del ${periodo} · Naturaleza ${cuentaActiva.naturaleza?.toLowerCase()}`,
+      moneda: 'VES',
       archivo: `Libro_Mayor_${cuentaActiva.codigo}_${fechaHasta || new Date().toLocaleDateString('en-CA')}`,
       resumen: [
-        { etiqueta: 'Saldo final USD', valor: saldoFinal, tipo: 'usd' },
         { etiqueta: 'Saldo final Bs', valor: saldoFinalVes, tipo: 'bs' },
         { etiqueta: 'Movimientos', valor: filas.length, tipo: 'numero' },
       ],
@@ -193,9 +179,6 @@ export default function LibroMayor() {
           { titulo: 'Fecha', clave: 'fecha', tipo: 'fecha' },
           { titulo: 'Asiento', clave: 'numero', tipo: 'codigo' },
           { titulo: 'Concepto', clave: 'glosa', tipo: 'texto', ancho: 42 },
-          { titulo: 'Debe', clave: 'debe', tipo: 'usd' },
-          { titulo: 'Haber', clave: 'haber', tipo: 'usd' },
-          { titulo: 'Saldo', clave: 'saldo', tipo: 'usd' },
           { titulo: 'Debe Bs', clave: 'debeVes', tipo: 'bs' },
           { titulo: 'Haber Bs', clave: 'haberVes', tipo: 'bs' },
           { titulo: 'Saldo Bs', clave: 'saldoVes', tipo: 'bs' },
@@ -413,20 +396,20 @@ export default function LibroMayor() {
         <div className="kpi-card" style={{ margin: 0 }}>
           <div className="kpi-card__label">Total Débitos (Debe)</div>
           <div className="kpi-card__value" style={{ color: 'var(--primary)' }}>
-            {formatMoney(totalDebe)}
+            {formatBolivares(totalDebeVes)}
           </div>
           <div className="kpi-card__sub" style={{ color: 'var(--text-muted)' }}>
-            {formatBolivares(totalDebeVes)} · Suma de cargos en el periodo
+            Suma de cargos en el periodo
           </div>
         </div>
 
         <div className="kpi-card" style={{ margin: 0 }}>
           <div className="kpi-card__label">Total Créditos (Haber)</div>
           <div className="kpi-card__value" style={{ color: 'var(--info)' }}>
-            {formatMoney(totalHaber)}
+            {formatBolivares(totalHaberVes)}
           </div>
           <div className="kpi-card__sub" style={{ color: 'var(--text-muted)' }}>
-            {formatBolivares(totalHaberVes)} · Suma de abonos en el periodo
+            Suma de abonos en el periodo
           </div>
         </div>
 
@@ -437,13 +420,13 @@ export default function LibroMayor() {
           <div
             className="kpi-card__value"
             style={{
-              color: saldoFinal >= 0 ? '#22C55E' : '#EF4444',
+              color: saldoFinalVes >= 0 ? '#22C55E' : '#EF4444',
             }}
           >
-            {formatMoney(saldoFinal)}
+            {formatBolivares(saldoFinalVes)}
           </div>
           <div className="kpi-card__sub" style={{ color: '#22C55E' }}>
-            {formatBolivares(saldoFinalVes)} · {cuentaActiva?.naturaleza?.toUpperCase() === 'ACREEDORA' ? 'Saldo Acreedor' : 'Saldo Deudor'}
+            {cuentaActiva?.naturaleza?.toUpperCase() === 'ACREEDORA' ? 'Saldo Acreedor' : 'Saldo Deudor'}
           </div>
         </div>
       </div>
@@ -506,25 +489,20 @@ export default function LibroMayor() {
           </div>
         ) : (
           <div className="table-container" style={{ margin: 0, overflowX: 'auto' }}>
-            <table className="table" style={{ margin: 0, minWidth: '1250px' }}>
+            <table className="table" style={{ margin: 0, minWidth: '950px' }}>
               <thead>
                 <tr>
                   <th style={{ width: '120px' }}>Fecha</th>
                   <th style={{ width: '150px' }}>Asiento</th>
                   <th style={{ width: '100px' }}>Módulo</th>
                   <th>Concepto / Glosa</th>
-                  <th style={{ width: '130px', textAlign: 'right' }}>Debe (USD)</th>
-                  <th style={{ width: '130px', textAlign: 'right' }}>Haber (USD)</th>
                   <th style={{ width: '145px', textAlign: 'right' }}>Debe (Bs.)</th>
                   <th style={{ width: '145px', textAlign: 'right' }}>Haber (Bs.)</th>
-                  <th style={{ width: '150px', textAlign: 'right' }}>Saldo (USD)</th>
                   <th style={{ width: '160px', textAlign: 'right' }}>Saldo (Bs.)</th>
                 </tr>
               </thead>
               <tbody>
                 {movimientosPagina.map((m) => {
-                  const debe = Number(m.debe || 0);
-                  const haber = Number(m.haber || 0);
                   const debeVes = Number(m.debe_ves || 0);
                   const haberVes = Number(m.haber_ves || 0);
                   const asiento = m.asientos_contables;
@@ -541,38 +519,11 @@ export default function LibroMayor() {
                         </span>
                       </td>
                       <td style={{ maxWidth: '300px' }}>{asiento?.glosa || '—'}</td>
-                      <td
-                        style={{
-                          textAlign: 'right',
-                          fontWeight: debe > 0 ? 600 : 400,
-                          color: debe > 0 ? 'var(--text-primary)' : 'var(--text-muted)',
-                        }}
-                      >
-                        {debe > 0 ? formatMoney(debe) : '—'}
-                      </td>
-                      <td
-                        style={{
-                          textAlign: 'right',
-                          fontWeight: haber > 0 ? 600 : 400,
-                          color: haber > 0 ? 'var(--text-primary)' : 'var(--text-muted)',
-                        }}
-                      >
-                        {haber > 0 ? formatMoney(haber) : '—'}
-                      </td>
                       <td style={{ textAlign: 'right', fontWeight: debeVes > 0 ? 600 : 400, color: debeVes > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                         {debeVes > 0 ? formatBolivares(debeVes) : '—'}
                       </td>
                       <td style={{ textAlign: 'right', fontWeight: haberVes > 0 ? 600 : 400, color: haberVes > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                         {haberVes > 0 ? formatBolivares(haberVes) : '—'}
-                      </td>
-                      <td
-                        style={{
-                          textAlign: 'right',
-                          fontWeight: 700,
-                          color: m.saldoAcumulado >= 0 ? 'var(--primary)' : '#EF4444',
-                        }}
-                      >
-                        {formatMoney(m.saldoAcumulado)}
                       </td>
                       <td
                         style={{
@@ -598,19 +549,8 @@ export default function LibroMayor() {
                   <td colSpan="4" style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>
                     Total Movimientos ({movimientosFiltrados.length}):
                   </td>
-                  <td style={{ textAlign: 'right', color: 'var(--primary)' }}>{formatMoney(totalDebe)}</td>
-                  <td style={{ textAlign: 'right', color: 'var(--info)' }}>{formatMoney(totalHaber)}</td>
                   <td style={{ textAlign: 'right', color: 'var(--primary)' }}>{formatBolivares(totalDebeVes)}</td>
                   <td style={{ textAlign: 'right', color: 'var(--info)' }}>{formatBolivares(totalHaberVes)}</td>
-                  <td
-                    style={{
-                      textAlign: 'right',
-                      color: saldoFinal >= 0 ? '#22C55E' : '#EF4444',
-                      fontSize: '1.05rem',
-                    }}
-                  >
-                    {formatMoney(saldoFinal)}
-                  </td>
                   <td
                     style={{
                       textAlign: 'right',

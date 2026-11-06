@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { formatUSD, formatBs } from '../../../utils/formatters';
+import { formatMonto, formatDolares } from '../../../utils/formatters';
 import {
   HiOutlineBanknotes,
   HiOutlineExclamationTriangle,
@@ -90,10 +90,10 @@ export default function CxCExecutiveSummary({ cuentas = [], tasaValor = 0, confi
           <div className="stat-card__content">
             <span className="stat-card__label">Cartera Activa por Cobrar</span>
             <span className="stat-card__value" style={{ color: '#6366F1' }}>
-              {formatUSD(metrics.totalPendiente)}
+              {formatMonto(metrics.totalPendiente)}
             </span>
             <span className="stat-card__sub">
-              {tasaValor > 0 ? formatBs(metrics.totalPendiente * tasaValor) : `${cuentas.length} cuentas registradas`}
+              {tasaValor > 0 ? `Ref. ${formatDolares(metrics.totalPendiente)}` : `${cuentas.length} cuentas registradas`}
             </span>
           </div>
         </div>
@@ -123,7 +123,7 @@ export default function CxCExecutiveSummary({ cuentas = [], tasaValor = 0, confi
               {metrics.tasaRecuperacion.toFixed(1)}%
             </span>
             <span className="stat-card__sub">
-              {formatUSD(metrics.totalAbonado)} recaudados
+              {formatMonto(metrics.totalAbonado)} recaudados
             </span>
           </div>
         </div>
@@ -203,15 +203,15 @@ export default function CxCExecutiveSummary({ cuentas = [], tasaValor = 0, confi
             <div style={{ marginTop: '0.5rem', padding: '0.75rem', background: 'var(--bg-elevated)', borderRadius: '8px', fontSize: '0.82rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>Crédito Bruto Colocado:</span>
-                <strong>{formatUSD(metrics.totalCreditoOtorgado)}</strong>
+                <strong>{formatMonto(metrics.totalCreditoOtorgado)}</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>Intereses / Recargos generados:</span>
-                <strong style={{ color: '#EF4444' }}>+{formatUSD(metrics.totalRecargo)}</strong>
+                <strong style={{ color: '#EF4444' }}>+{formatMonto(metrics.totalRecargo)}</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>Total Cobrado a la fecha:</span>
-                <strong style={{ color: '#10B981' }}>{formatUSD(metrics.totalAbonado)}</strong>
+                <strong style={{ color: '#10B981' }}>{formatMonto(metrics.totalAbonado)}</strong>
               </div>
             </div>
           </div>
@@ -256,11 +256,11 @@ export default function CxCExecutiveSummary({ cuentas = [], tasaValor = 0, confi
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontWeight: 800, color: '#EF4444', fontSize: '0.95rem' }}>
-                      {formatUSD(d.totalDeuda)}
+                      {formatMonto(d.totalDeuda)}
                     </div>
                     {tasaValor > 0 && (
                       <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                        {formatBs(d.totalDeuda * tasaValor)}
+                        Ref. {formatDolares(d.totalDeuda)}
                       </div>
                     )}
                   </div>

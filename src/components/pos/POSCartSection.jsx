@@ -1,8 +1,9 @@
 import { HiOutlineTrash } from 'react-icons/hi2';
-import { formatUSD } from '../../utils/formatters';
+import { formatMonto } from '../../utils/formatters';
 
 export default function POSCartSection({
   carrito,
+  tasa,
   clienteSeleccionado,
   onActualizarCantidad,
   onQuitarDelCarrito,
@@ -44,7 +45,7 @@ export default function POSCartSection({
               <div className="pos-cart-item__main">
                 <div className="pos-cart-item__info">
                   <span className="pos-cart-item__name">{item.producto_nombre}</span>
-                  <span className="pos-cart-item__price">{formatUSD(item.precio_unitario)} c/u</span>
+                  <span className="pos-cart-item__price">{formatMonto(item.precio_unitario, tasa)} c/u</span>
                 </div>
                 <button
                   type="button"
@@ -83,7 +84,7 @@ export default function POSCartSection({
                     +
                   </button>
                 </div>
-                <span className="pos-cart-item__subtotal">{formatUSD(item.subtotal)}</span>
+                <span className="pos-cart-item__subtotal">{formatMonto(item.subtotal, tasa)}</span>
               </div>
             </div>
           ))}

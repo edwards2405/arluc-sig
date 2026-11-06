@@ -1,6 +1,6 @@
 import { HiOutlinePlus, HiOutlineTrash } from 'react-icons/hi2';
 import { METODOS_PAGO, METODOS_INICIAL_CASHEA } from '../../utils/constants';
-import { formatUSD, formatBs } from '../../utils/formatters';
+import { formatMonto, formatBs, formatDolares } from '../../utils/formatters';
 
 export default function POSPaymentSection({
   totalUSD,
@@ -34,6 +34,7 @@ export default function POSPaymentSection({
   onLimpiarCaja,
 }) {
   const tieneContenido = carrito.length > 0 || !!clienteSeleccionado;
+  const tasaDia = tasaHoy ? parseFloat(tasaHoy.tasa_usd_bs) : undefined;
 
   return (
     <div className="pos-summary">
@@ -43,39 +44,37 @@ export default function POSPaymentSection({
         <div className="pos-totals">
           <div className="pos-totals__row">
             <span>Base imponible</span>
-            <span>{formatUSD(baseGravada)}</span>
+            <span>{formatMonto(baseGravada, tasaDia)}</span>
           </div>
           {montoExento > 0 && (
             <div className="pos-totals__row">
               <span>Exento</span>
-              <span>{formatUSD(montoExento)}</span>
+              <span>{formatMonto(montoExento, tasaDia)}</span>
             </div>
           )}
           <div className="pos-totals__row">
             <span>IVA {Number(fiscal.alicuota_iva)}%</span>
-            <span>{formatUSD(montoIva)}</span>
+            <span>{formatMonto(montoIva, tasaDia)}</span>
           </div>
           <div className="pos-totals__row pos-totals__row--total">
-            <span>Total USD</span>
-            <span>{formatUSD(totalUSD)}</span>
+            <span>Total Bs</span>
+            <span>{tasaHoy ? formatBs(totalBs) : formatMonto(totalUSD, tasaDia)}</span>
+          </div>
+          <div className="pos-totals__row pos-totals__row--bs">
+            <span>Ref. USD</span>
+            <span>{formatDolares(totalUSD)}</span>
           </div>
           {montoRetencion > 0 && (
             <>
               <div className="pos-totals__row" style={{ color: 'var(--info)' }}>
                 <span>− Retención IVA {Number(porcentajeRetencion)}% (contribuyente especial)</span>
-                <span>{formatUSD(montoRetencion)}</span>
+                <span>{formatMonto(montoRetencion, tasaDia)}</span>
               </div>
               <div className="pos-totals__row" style={{ fontWeight: 700 }}>
                 <span>A cobrar</span>
-                <span>{formatUSD(totalACobrar)}</span>
+                <span>{formatMonto(totalACobrar, tasaDia)}</span>
               </div>
             </>
-          )}
-          {tasaHoy && (
-            <div className="pos-totals__row pos-totals__row--bs">
-              <span>Total Bs</span>
-              <span>{formatBs(totalBs)}</span>
-            </div>
           )}
         </div>
 
@@ -87,7 +86,7 @@ export default function POSPaymentSection({
               onClick={onIniciarCobro}
               disabled={carrito.length === 0}
             >
-              Cobrar {formatUSD(totalACobrar)}
+              Cobrar {formatMonto(totalACobrar, tasaDia)}
             </button>
 
             {tieneContenido && (
@@ -160,6 +159,11 @@ export default function POSPaymentSection({
                             value={mp.monto_usd ?? ''}
                             onChange={(e) => onActualizarMetodoPago(index, 'monto_usd', e.target.value)}
                           />
+                          {!metodoConfig?.enBs && (
+                            <small style={{ display: 'block', marginTop: '0.2rem', color: 'var(--text-secondary)' }}>
+                              Equivale a {formatMonto(mp.monto_usd, tasaDia)}
+                            </small>
+                          )}
                         </div>
 
                         {metodoConfig?.enBs && (
@@ -307,36 +311,36 @@ export default function POSPaymentSection({
             <div className="pos-payment-summary">
               <div className="pos-totals__row">
                 <span>{tieneCashea ? 'Total Cobrado hoy en Tienda' : 'Pagado'}</span>
-                <span className="text-success">{formatUSD(totalPagadoEnTienda)}</span>
+                <span className="text-success">{formatMonto(totalPagadoEnTienda, tasaDia)}</span>
               </div>
               {tieneCashea && (
                 <div className="pos-totals__row" style={{ color: '#EC4899', fontWeight: 'bold' }}>
                   <span>Monto Financiado Cashea (Crédito)</span>
-                  <span>{formatUSD(casheaCreditoUSD)}</span>
+                  <span>{formatMonto(casheaCreditoUSD, tasaDia)}</span>
                 </div>
               )}
               {tieneCredito && montoCredito > 0 && (
                 <div className="pos-totals__row" style={{ color: 'rgba(99,102,241,0.9)', fontWeight: 'bold' }}>
                   <span>Monto a Crédito Directo</span>
-                  <span>{formatUSD(montoCredito)}</span>
+                  <span>{formatMonto(montoCredito, tasaDia)}</span>
                 </div>
               )}
               {montoIgtf > 0 && (
                 <>
                   <div className="pos-totals__row" style={{ color: 'var(--warning)', fontWeight: 'bold' }}>
                     <span>+ IGTF {Number(fiscal.alicuota_igtf)}% (pagos en divisas)</span>
-                    <span>{formatUSD(montoIgtf)}</span>
+                    <span>{formatDolares(montoIgtf)} <small>({formatMonto(montoIgtf, tasaDia)})</small></span>
                   </div>
                   <div className="pos-totals__row" style={{ fontWeight: 'bold' }}>
                     <span>Total a cobrar con IGTF</span>
-                    <span>{formatUSD(totalACobrar + montoIgtf)}</span>
+                    <span>{formatMonto(totalACobrar + montoIgtf, tasaDia)}</span>
                   </div>
                 </>
               )}
               {restante > 0.01 && (
                 <div className="pos-totals__row">
                   <span>Restante</span>
-                  <span className="text-danger">{formatUSD(restante)}</span>
+                  <span className="text-danger">{formatMonto(restante, tasaDia)}</span>
                 </div>
               )}
             </div>
@@ -348,7 +352,7 @@ export default function POSPaymentSection({
                 onClick={onEmitirFactura}
                 disabled={loading || restante > 0.01}
               >
-                {loading ? 'Procesando...' : `Emitir Factura ${formatUSD(totalACobrar + montoIgtf)}`}
+                {loading ? 'Procesando...' : `Emitir Factura ${formatMonto(totalACobrar + montoIgtf, tasaDia)}`}
               </button>
               <button type="button" className="btn btn--ghost btn--full" onClick={onVolverAlCarrito}>
                 Volver al Carrito

@@ -49,7 +49,6 @@ export function exportarCxCExcel({ cuentas = [], abonosHistorico = [], config = 
       'Cant. Cuentas': cuentasBucket.length,
       'Total Saldo USD': parseFloat(monto.toFixed(2)),
       'Participación (%)': parseFloat(((monto / totalCartera) * 100).toFixed(2)),
-      'Contravalor Bs': tasaValor > 0 ? parseFloat((monto * tasaValor).toFixed(2)) : 0,
     };
   });
 

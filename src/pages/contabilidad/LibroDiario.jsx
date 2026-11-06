@@ -16,6 +16,7 @@ import {
   fetchCuentasOperativas,
   ORIGENES_CONTABLES,
 } from '../../services/contabilidadService';
+import { formatDolares } from '../../utils/formatters';
 import Pagination from '../../components/common/Pagination';
 import usePaginacion from '../../hooks/usePaginacion';
 
@@ -57,8 +58,6 @@ export default function LibroDiario() {
   useEffect(() => { loadData(); }, [loadData]);
 
   // ---- Helpers ----
-  const formatMoney = (amount) =>
-    `$${Number(amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const formatBolivares = (amount) =>
     `Bs. ${Number(amount || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -66,9 +65,14 @@ export default function LibroDiario() {
     acc + Math.round(Number(asiento.total_debe || 0) * 100), 0);
   const totalHaberCentimos = asientos.reduce((acc, asiento) =>
     acc + Math.round(Number(asiento.total_haber || 0) * 100), 0);
-  const totalDebe = totalDebeCentimos / 100;
-  const totalHaber = totalHaberCentimos / 100;
   const diferencia = Math.abs(totalDebeCentimos - totalHaberCentimos) / 100;
+  const totalDebeVesCentimos = asientos.reduce((acc, asiento) =>
+    acc + Math.round(Number(asiento.total_debe_ves || 0) * 100), 0);
+  const totalHaberVesCentimos = asientos.reduce((acc, asiento) =>
+    acc + Math.round(Number(asiento.total_haber_ves || 0) * 100), 0);
+  const totalDebeVes = totalDebeVesCentimos / 100;
+  const totalHaberVes = totalHaberVesCentimos / 100;
+  const diferenciaVes = Math.abs(totalDebeVesCentimos - totalHaberVesCentimos) / 100;
 
   // ---- Líneas dinámicas ----
   function updateLinea(idx, field, value) {
@@ -117,7 +121,7 @@ export default function LibroDiario() {
     const totalDCentimos = lineasLimpias.reduce((s, l) => s + Math.round(l.debe * 100), 0);
     const totalHCentimos = lineasLimpias.reduce((s, l) => s + Math.round(l.haber * 100), 0);
     if (totalDCentimos !== totalHCentimos) {
-      toast.error(`El asiento no está balanceado. Debe: ${formatMoney(totalD)} ≠ Haber: ${formatMoney(totalH)}`);
+      toast.error(`El asiento no está balanceado. Debe: ${formatDolares(totalD)} ≠ Haber: ${formatDolares(totalH)}`);
       return;
     }
 
@@ -171,18 +175,18 @@ export default function LibroDiario() {
       <div className="dashboard-grid" style={{ marginBottom: '1.5rem' }}>
         <div className="kpi-card">
           <div className="kpi-card__label">Total Débitos (Debe)</div>
-          <div className="kpi-card__value" style={{ color: 'var(--primary)' }}>{formatMoney(totalDebe)}</div>
+          <div className="kpi-card__value" style={{ color: 'var(--primary)' }}>{formatBolivares(totalDebeVes)}</div>
           <div className="kpi-card__sub" style={{ color: '#94A3B8' }}>{asientos.length} asientos analizados</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-card__label">Total Créditos (Haber)</div>
-          <div className="kpi-card__value" style={{ color: 'var(--info)' }}>{formatMoney(totalHaber)}</div>
+          <div className="kpi-card__value" style={{ color: 'var(--info)' }}>{formatBolivares(totalHaberVes)}</div>
           <div className="kpi-card__sub" style={{ color: '#94A3B8' }}>Sumas verificadas</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-card__label">Diferencia</div>
           <div className="kpi-card__value" style={{ color: diferencia < 0.01 ? '#22C55E' : '#EF4444' }}>
-            {diferencia < 0.01 ? 'Balanceado' : formatMoney(diferencia)}
+            {diferencia < 0.01 ? 'Balanceado' : formatBolivares(diferenciaVes)}
           </div>
           <div className="kpi-card__sub" style={{ color: '#94A3B8' }}>
             {diferencia < 0.01 ? 'Partida doble correcta' : '¡Revisar asientos descuadrados!'}
@@ -257,8 +261,6 @@ export default function LibroDiario() {
                     <tr>
                       <th style={{ width: '130px' }}>Código</th>
                       <th>Cuenta Contable</th>
-                      <th style={{ width: '130px', textAlign: 'right' }}>Debe (USD)</th>
-                      <th style={{ width: '130px', textAlign: 'right' }}>Haber (USD)</th>
                       <th style={{ width: '145px', textAlign: 'right' }}>Debe (Bs.)</th>
                       <th style={{ width: '145px', textAlign: 'right' }}>Haber (Bs.)</th>
                     </tr>
@@ -272,12 +274,6 @@ export default function LibroDiario() {
                           <td style={{ paddingLeft: Number(linea.haber) > 0 ? '2rem' : '0.75rem' }}>
                             <span style={{ fontWeight: Number(linea.debe) > 0 ? 600 : 400 }}>{cuenta?.nombre}</span>
                           </td>
-                          <td style={{ textAlign: 'right', fontWeight: Number(linea.debe) > 0 ? 600 : 400, color: Number(linea.debe) > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                            {Number(linea.debe) > 0 ? formatMoney(linea.debe) : '—'}
-                          </td>
-                          <td style={{ textAlign: 'right', fontWeight: Number(linea.haber) > 0 ? 600 : 400, color: Number(linea.haber) > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                            {Number(linea.haber) > 0 ? formatMoney(linea.haber) : '—'}
-                          </td>
                           <td style={{ textAlign: 'right', fontWeight: Number(linea.debeVes) > 0 ? 600 : 400, color: Number(linea.debeVes) > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                             {Number(linea.debeVes) > 0 ? formatBolivares(linea.debeVes) : '—'}
                           </td>
@@ -289,8 +285,6 @@ export default function LibroDiario() {
                     })}
                     <tr style={{ background: 'rgba(255, 255, 255, 0.015)', fontWeight: 700, borderTop: '1px solid var(--border)' }}>
                       <td colSpan="2" style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>Sumas Iguales:</td>
-                      <td style={{ textAlign: 'right', color: 'var(--primary)' }}>{formatMoney(asiento.total_debe)}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--info)' }}>{formatMoney(asiento.total_haber)}</td>
                       <td style={{ textAlign: 'right', color: 'var(--primary)' }}>{formatBolivares(asiento.total_debe_ves)}</td>
                       <td style={{ textAlign: 'right', color: 'var(--info)' }}>{formatBolivares(asiento.total_haber_ves)}</td>
                     </tr>
@@ -334,7 +328,7 @@ export default function LibroDiario() {
               {/* Líneas dinámicas */}
               <div style={{ marginTop: '0.75rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <label style={{ fontWeight: 600, fontSize: '0.9rem' }}>Líneas de Partida Doble</label>
+                  <label style={{ fontWeight: 600, fontSize: '0.9rem' }}>Líneas de Partida Doble (montos en USD)</label>
                   <button type="button" className="btn btn--ghost btn--xs" onClick={addLinea} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
                     <HiOutlinePlus /> Agregar Línea
                   </button>
@@ -355,12 +349,12 @@ export default function LibroDiario() {
                         ))}
                       </select>
                       <input
-                        type="number" min="0" step="0.01" placeholder="Debe"
+                        type="number" min="0" step="0.01" placeholder="Debe (USD)"
                         value={linea.debe} onChange={(e) => updateLinea(idx, 'debe', e.target.value)}
                         style={{ flex: 1, minWidth: '100px', padding: '0.5rem', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.85rem' }}
                       />
                       <input
-                        type="number" min="0" step="0.01" placeholder="Haber"
+                        type="number" min="0" step="0.01" placeholder="Haber (USD)"
                         value={linea.haber} onChange={(e) => updateLinea(idx, 'haber', e.target.value)}
                         style={{ flex: 1, minWidth: '100px', padding: '0.5rem', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-primary)', fontSize: '0.85rem' }}
                       />
@@ -379,10 +373,10 @@ export default function LibroDiario() {
 
                 {/* Resumen de balance */}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1.5rem', marginTop: '0.75rem', padding: '0.75rem', background: formBalanced ? 'var(--success-bg)' : 'var(--danger-bg)', borderRadius: '8px', fontSize: '0.9rem', fontWeight: 600 }}>
-                  <span>Debe: {formatMoney(sumaDebeForm)}</span>
-                  <span>Haber: {formatMoney(sumaHaberForm)}</span>
+                  <span>Debe: {formatDolares(sumaDebeForm)}</span>
+                  <span>Haber: {formatDolares(sumaHaberForm)}</span>
                   <span style={{ color: formBalanced ? '#22C55E' : '#EF4444' }}>
-                    {formBalanced ? '✓ Balanceado' : `✗ Dif: ${formatMoney(Math.abs(sumaDebeForm - sumaHaberForm))}`}
+                    {formBalanced ? '✓ Balanceado' : `✗ Dif: ${formatDolares(Math.abs(sumaDebeForm - sumaHaberForm))}`}
                   </span>
                 </div>
               </div>

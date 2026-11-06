@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { formatUSD, formatBs, formatFecha } from '../../utils/formatters';
+import { formatMonto, formatBs, formatFecha } from '../../utils/formatters';
 import {
   HiOutlineLockClosed, HiOutlineLockOpen, HiOutlineEye, HiOutlineArrowPath, HiOutlineCheckCircle,
 } from 'react-icons/hi2';
@@ -11,6 +11,8 @@ const MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio
 const finDeMes = (anio, mes) => new Date(anio, mes, 0).toLocaleDateString('en-CA');
 const hoy = () => new Date().toLocaleDateString('en-CA');
 const num = (v) => Number(v || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// La reserva legal solo se guarda en USD: se lleva a Bs con la misma relación Bs/USD del resultado del ejercicio
+const tasaEjercicio = (e) => (Number(e.utilidad_usd) > 0 && Number(e.utilidad_ves) > 0 ? Number(e.utilidad_ves) / Number(e.utilidad_usd) : undefined);
 
 export default function CierreContable() {
   const { profile } = useAuth();
@@ -84,7 +86,7 @@ export default function CierreContable() {
     if (!window.confirm(`¿Cerrar el ejercicio económico ${anio}? Se cancelan ingresos, costos y gastos contra el resultado, se traslada a utilidades no distribuidas y se constituye la reserva legal. No se puede deshacer.`)) return;
     const { data, error } = await supabase.rpc('cerrar_ejercicio', { p_anio: anio });
     if (error) { toast.error(error.message); return; }
-    toast.success(`Ejercicio ${anio} cerrado · resultado ${formatUSD(data.utilidad_usd)} · reserva legal ${formatUSD(data.reserva_legal_usd)}`);
+    toast.success(`Ejercicio ${anio} cerrado · resultado ${formatBs(data.utilidad_ves)} · reserva legal ${formatMonto(data.reserva_legal_usd, tasaEjercicio(data))}`);
     cargar();
   }
 
@@ -123,7 +125,7 @@ export default function CierreContable() {
                       </span>
                     </td>
                     <td>{m.revaluacion ? num(m.revaluacion.tasa_cambio) : '—'}</td>
-                    <td>{m.revaluacion ? <><code>{m.revaluacion.numero}</code><div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{formatUSD(m.revaluacion.total_debe)} · {formatBs(m.revaluacion.total_debe_ves)}</div></> : '—'}</td>
+                    <td>{m.revaluacion ? <><code>{m.revaluacion.numero}</code><div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{formatBs(m.revaluacion.total_debe_ves)}</div></> : '—'}</td>
                     <td>{m.periodo?.cerrado_en ? formatFecha(m.periodo.cerrado_en, true) : '—'}</td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: '0.35rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -162,18 +164,18 @@ export default function CierreContable() {
           <div className="table-container">
             <table className="table">
               <thead>
-                <tr><th>Cuenta</th><th>Moneda de origen</th><th style={{ textAlign: 'right' }}>Saldo USD</th><th style={{ textAlign: 'right' }}>Saldo Bs</th>
-                  <th style={{ textAlign: 'right' }}>Ajuste USD</th><th style={{ textAlign: 'right' }}>Ajuste Bs</th></tr>
+                <tr><th>Cuenta</th><th>Moneda de origen</th><th style={{ textAlign: 'right' }}>Saldo a tasa de cierre</th><th style={{ textAlign: 'right' }}>Saldo en libros (Bs)</th>
+                  <th style={{ textAlign: 'right' }}>Ajuste de USD (en Bs)</th><th style={{ textAlign: 'right' }}>Ajuste Bs</th></tr>
               </thead>
               <tbody>
                 {vista.filas.map((f) => (
                   <tr key={f.cuenta_id}>
                     <td><code>{f.codigo}</code> {f.nombre}</td>
                     <td>{f.moneda === 'USD' ? 'Divisas (se revalúan los Bs)' : 'Bolívares (se revalúan los USD)'}</td>
-                    <td style={{ textAlign: 'right' }}>{num(f.saldo_usd)}</td>
-                    <td style={{ textAlign: 'right' }}>{num(f.saldo_ves)}</td>
-                    <td style={{ textAlign: 'right', color: Number(f.ajuste_usd) < 0 ? 'var(--danger)' : undefined }}>{Number(f.ajuste_usd) ? num(f.ajuste_usd) : '—'}</td>
-                    <td style={{ textAlign: 'right', color: Number(f.ajuste_ves) < 0 ? 'var(--danger)' : undefined }}>{Number(f.ajuste_ves) ? num(f.ajuste_ves) : '—'}</td>
+                    <td style={{ textAlign: 'right' }}>{formatMonto(f.saldo_usd, f.tasa_cierre)}</td>
+                    <td style={{ textAlign: 'right' }}>{formatBs(f.saldo_ves)}</td>
+                    <td style={{ textAlign: 'right', color: Number(f.ajuste_usd) < 0 ? 'var(--danger)' : undefined }}>{Number(f.ajuste_usd) ? formatMonto(f.ajuste_usd, f.tasa_cierre) : '—'}</td>
+                    <td style={{ textAlign: 'right', color: Number(f.ajuste_ves) < 0 ? 'var(--danger)' : undefined }}>{Number(f.ajuste_ves) ? formatBs(f.ajuste_ves) : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -198,8 +200,7 @@ export default function CierreContable() {
         <div className="table-container">
           <table className="table">
             <thead>
-              <tr><th>Ejercicio</th><th>Desde</th><th>Hasta</th><th style={{ textAlign: 'right' }}>Resultado USD</th>
-                <th style={{ textAlign: 'right' }}>Resultado Bs</th><th style={{ textAlign: 'right' }}>Reserva legal</th><th>Cerrado</th></tr>
+              <tr><th>Ejercicio</th><th>Desde</th><th>Hasta</th><th style={{ textAlign: 'right' }}>Resultado Bs</th><th style={{ textAlign: 'right' }}>Reserva legal</th><th>Cerrado</th></tr>
             </thead>
             <tbody>
               {ejercicios.map((e) => (
@@ -207,13 +208,12 @@ export default function CierreContable() {
                   <td><strong>{e.anio}</strong></td>
                   <td>{formatFecha(e.fecha_inicio)}</td>
                   <td>{formatFecha(e.fecha_fin)}</td>
-                  <td style={{ textAlign: 'right' }}>{formatUSD(e.utilidad_usd)}</td>
                   <td style={{ textAlign: 'right' }}>{formatBs(e.utilidad_ves)}</td>
-                  <td style={{ textAlign: 'right' }}>{formatUSD(e.reserva_legal_usd)}</td>
+                  <td style={{ textAlign: 'right' }}>{formatMonto(e.reserva_legal_usd, tasaEjercicio(e))}</td>
                   <td>{formatFecha(e.cerrado_en, true)}</td>
                 </tr>
               ))}
-              {ejercicios.length === 0 && <tr><td colSpan="7" className="table__empty">Ningún ejercicio cerrado todavía</td></tr>}
+              {ejercicios.length === 0 && <tr><td colSpan="6" className="table__empty">Ningún ejercicio cerrado todavía</td></tr>}
             </tbody>
           </table>
         </div>

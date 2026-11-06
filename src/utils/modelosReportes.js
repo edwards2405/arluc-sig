@@ -3,7 +3,7 @@
  * (utils/reportes.js): el mismo modelo se ve en pantalla, se exporta a Excel
  * y se imprime. Cada uno declara su ficha de calidad de la información.
  */
-import { formatFecha } from './formatters';
+import { formatFecha, montosEnBs } from './formatters';
 
 const col = (titulo, clave, tipo = 'texto', ancho) => ({ titulo, clave, tipo, ancho });
 const ventasCols = (grupo) => [
@@ -33,12 +33,11 @@ export function modeloProgramado(r) {
   const base = {
     titulo: r.titulo,
     subtitulo: `Reporte programado · ${tipo.frecuencia} · generado el ${new Date(r.generado_en).toLocaleString('es-VE')}`,
-    moneda: 'USD',
     archivo: r.titulo.replace(/[·/]/g, '-').replace(/\s+/g, '_'),
     calidad: {
       relevante: tipo.para,
       oportunidad: `Generado automáticamente (${r.origen === 'CRON' ? 'programado' : 'regenerado manualmente'}) el ${new Date(r.generado_en).toLocaleString('es-VE')}. ${tipo.frecuencia}.`,
-      comprensible: 'Cifras clave arriba; detalle por sección con totales; montos en USD sin IVA salvo que se indique.',
+      comprensible: 'Cifras clave arriba; detalle por sección con totales; montos en Bs sin IVA salvo que se indique.',
       fuente: 'Facturas, notas, cobros y contabilidad registrados en el sistema al momento de generarse.',
     },
   };
@@ -140,7 +139,6 @@ export function modeloExcepciones(datos, desde, hasta) {
   return {
     titulo: 'Reporte de excepciones',
     subtitulo: `Del ${formatFecha(desde)} al ${formatFecha(hasta)} · solo situaciones fuera de los umbrales normales`,
-    moneda: 'USD',
     archivo: `Reporte_de_Excepciones_${desde}_al_${hasta}`,
     resumen: [
       { etiqueta: 'Controles revisados', valor: datos.length, tipo: 'numero' },
@@ -149,9 +147,9 @@ export function modeloExcepciones(datos, desde, hasta) {
     ],
     secciones: [
       { titulo: 'Resumen de controles', columnas: [col('Control', 'titulo', 'texto', 46), col('Umbral', 'umbral', 'texto', 36), col('Responsable', 'responsable', 'texto', 22), col('Casos', 'casos', 'numero')],
-        filas: datos.map((e) => ({ ...e, casos: e.filas.length })) },
+        filas: datos.map((e) => ({ ...e, umbral: montosEnBs(e.umbral), casos: e.filas.length })) },
       ...conCasos.map((e) => ({ titulo: `${e.titulo} (${e.filas.length})`, columnas: COLUMNAS_EXCEPCION[e.codigo], filas: e.filas,
-        nota: `Umbral: ${e.umbral} · Responsable: ${e.responsable}` })),
+        nota: `Umbral: ${montosEnBs(e.umbral)} · Responsable: ${e.responsable}` })),
     ],
     calidad: {
       relevante: 'Gerencia y responsables de cada área: muestra únicamente lo que requiere acción (gestión por excepción).',
@@ -171,7 +169,6 @@ export function modeloProyecciones(datos) {
   return {
     titulo: 'Proyecciones y pronósticos',
     subtitulo: `Calculado el ${new Date().toLocaleDateString('es-VE')} · ventas por regresión lineal de las últimas 8 semanas`,
-    moneda: 'USD',
     archivo: `Proyecciones_${new Date().toLocaleDateString('en-CA')}`,
     resumen: [
       { etiqueta: 'Efectivo disponible hoy', valor: fc.efectivo_actual },
@@ -218,7 +215,6 @@ export function modeloSolicitud(filas, desde, hasta, dimension) {
   return {
     titulo: `Ventas por ${etiqueta.toLowerCase()}`,
     subtitulo: `Reporte a solicitud · del ${formatFecha(desde)} al ${formatFecha(hasta)}`,
-    moneda: 'USD',
     archivo: `Ventas_por_${dimension}_${desde}_al_${hasta}`,
     resumen: [
       { etiqueta: 'Ventas netas', valor: total },

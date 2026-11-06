@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { getEmpresaConfig, saveEmpresaConfig, DEFAULT_EMPRESA, PRINT_WIDTHS } from '../../utils/constants';
-import { formatUSD, formatBs, formatFecha, formatTasa } from '../../utils/formatters';
+import { formatMonto, formatBs, formatDolares, formatFecha, formatTasa } from '../../utils/formatters';
 import { HiOutlinePrinter, HiOutlineXMark } from 'react-icons/hi2';
 
 export default function TicketFactura({ factura, onClose }) {
@@ -334,9 +334,9 @@ export default function TicketFactura({ factura, onClose }) {
                     {item.exento_iva && ' (E)'}
                   </td>
                   <td style={{ textAlign: 'center' }}>{item.cantidad}</td>
-                  <td style={{ textAlign: 'right' }}>{formatUSD(precio)}</td>
+                  <td style={{ textAlign: 'right' }}>{formatMonto(precio, tasaNum)}</td>
                   <td style={{ textAlign: 'right', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
-                    {subtotalBs > 0 ? formatBs(subtotalBs) : formatUSD(subtotalUSD)}
+                    {subtotalBs > 0 ? formatBs(subtotalBs) : formatMonto(subtotalUSD, tasaNum)}
                   </td>
                 </tr>
               );
@@ -356,11 +356,11 @@ export default function TicketFactura({ factura, onClose }) {
             <>
               <div className="ticket__row">
                 <span>Subtotal:</span>
-                <span>{formatUSD(factura.subtotal_usd || factura.total_usd)}</span>
+                <span>{formatMonto(factura.subtotal_usd || factura.total_usd, tasaNum)}</span>
               </div>
               <div className="ticket__row">
                 <span>Descuento:</span>
-                <span>-{formatUSD(factura.descuento_usd)}</span>
+                <span>-{formatMonto(factura.descuento_usd, tasaNum)}</span>
               </div>
             </>
           ) : null}
@@ -368,36 +368,32 @@ export default function TicketFactura({ factura, onClose }) {
             <>
               <div className="ticket__row">
                 <span>Base imponible:</span>
-                <span>{formatUSD(factura.base_imponible_usd)}</span>
+                <span>{formatMonto(factura.base_imponible_usd, tasaNum)}</span>
               </div>
               {Number(factura.exento_usd) > 0 && (
                 <div className="ticket__row">
                   <span>Exento (E):</span>
-                  <span>{formatUSD(factura.exento_usd)}</span>
+                  <span>{formatMonto(factura.exento_usd, tasaNum)}</span>
                 </div>
               )}
               <div className="ticket__row">
                 <span>IVA {Number(factura.alicuota_iva)}%:</span>
-                <span>{formatUSD(factura.iva_usd)}</span>
+                <span>{formatMonto(factura.iva_usd, tasaNum)}</span>
               </div>
               {Number(factura.iva_retenido_usd) > 0 && (
                 <div className="ticket__row">
                   <span>IVA retenido por el comprador:</span>
-                  <span>-{formatUSD(factura.iva_retenido_usd)}</span>
+                  <span>-{formatMonto(factura.iva_retenido_usd, tasaNum)}</span>
                 </div>
               )}
               {Number(factura.igtf_usd) > 0 && (
                 <div className="ticket__row">
-                  <span>IGTF {Number(factura.alicuota_igtf)}% s/ {formatUSD(factura.base_igtf_usd)}:</span>
-                  <span>{formatUSD(factura.igtf_usd)}</span>
+                  <span>IGTF {Number(factura.alicuota_igtf)}% s/ {formatMonto(factura.base_igtf_usd, tasaNum)}:</span>
+                  <span>{formatMonto(factura.igtf_usd, tasaNum)}</span>
                 </div>
               )}
             </>
           )}
-          <div className="ticket__row ticket__row--bold">
-            <span>Total USD:</span>
-            <span>{formatUSD(factura.total_usd)}</span>
-          </div>
           <div className="ticket__row">
             <span>Tasa BCV:</span>
             <span>{formatTasa(tasa?.tasa_usd_bs || tasaNum || tasa)}</span>
@@ -405,6 +401,10 @@ export default function TicketFactura({ factura, onClose }) {
           <div className="ticket__row ticket__row--bold">
             <span>Total Bs:</span>
             <span>{formatBs(factura.total_bs)}</span>
+          </div>
+          <div className="ticket__row">
+            <span>Ref. USD:</span>
+            <span>{formatDolares(factura.total_usd)}</span>
           </div>
         </div>
 
@@ -485,11 +485,11 @@ export default function TicketFactura({ factura, onClose }) {
                   {/* Inicial Pagada Total */}
                   <div className="ticket__row" style={{ fontWeight: 'bold' }}>
                     <span>Inicial Pagada:</span>
-                    <span>{formatUSD(totalInicialUSD)}</span>
+                    <span>{formatMonto(totalInicialUSD, tasaNum)}</span>
                   </div>
                   {totalInicialBs > 0 && (
                     <div className="ticket__ref" style={{ color: '#000', fontWeight: 'bold' }}>
-                      Ref. Inicial: {formatBs(totalInicialBs)}
+                      Ref. Inicial: {formatDolares(totalInicialUSD)}
                     </div>
                   )}
 
@@ -507,7 +507,7 @@ export default function TicketFactura({ factura, onClose }) {
 
                       return (
                         <div key={idx} className="ticket__ref" style={{ color: '#000', fontWeight: 'bold', paddingLeft: '4px' }}>
-                          • {di.metodo}: {isBs ? `${formatBs(diBs)} (Ref. ${formatUSD(diUSD)})` : `${formatUSD(diUSD)}`}
+                          • {di.metodo}: {isBs ? `${formatBs(diBs)} (Ref. ${formatDolares(diUSD)})` : `${formatMonto(diUSD, tasaNum)} (Ref. ${formatDolares(diUSD)})`}
                           {di.referencia ? ` (N° Op: ${di.referencia})` : ''}
                           {di.titular ? ` (Emisor: ${di.titular})` : ''}
                         </div>
@@ -524,7 +524,7 @@ export default function TicketFactura({ factura, onClose }) {
                   {/* Monto Financiado Cashea */}
                   <div className="ticket__row ticket__cashea-deuda" style={{ marginTop: '4px', paddingTop: '3px', borderTop: '1px dotted #000', fontWeight: 'bold' }}>
                     <span>Monto Financiado Cashea:</span>
-                    <span>{formatUSD(debiendoUSD)}</span>
+                    <span>{formatMonto(debiendoUSD, tasaNum)}</span>
                   </div>
                   <div className="ticket__cashea-note" style={{ fontSize: '9px', fontStyle: 'italic', marginTop: '2px', color: '#000' }}>
                     * Cuotas a pagar por el cliente a través de Cashea
@@ -552,7 +552,7 @@ export default function TicketFactura({ factura, onClose }) {
                           <span>{formatBs(montoBs)}</span>
                         </div>
                         <div className="ticket__ref" style={{ color: '#000', fontWeight: 'bold' }}>
-                          Ref. {formatUSD(montoUSD)}
+                          Ref. {formatDolares(montoUSD)}
                         </div>
                         {mp.referencia && (
                           <div className="ticket__ref" style={{ fontWeight: 'bold', color: '#000' }}>
@@ -567,11 +567,11 @@ export default function TicketFactura({ factura, onClose }) {
                     <div key={i} className="ticket__payment-item">
                       <div className="ticket__row">
                         <span>{mp.metodo}:</span>
-                        <span>{formatUSD(montoUSD)}</span>
+                        <span>{formatMonto(montoUSD, tasaNum)}</span>
                       </div>
                       {montoBs > 0 && (
                         <div className="ticket__ref" style={{ color: '#000', fontWeight: 'bold' }}>
-                          Ref. {formatBs(montoBs)}
+                          Ref. {formatDolares(montoUSD)}
                         </div>
                       )}
                       {mp.zelle_titular && (

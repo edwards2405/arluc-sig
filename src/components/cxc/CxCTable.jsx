@@ -8,7 +8,7 @@ import {
   HiOutlineShoppingBag,
 } from 'react-icons/hi2';
 import { FaWhatsapp, FaPhone } from 'react-icons/fa';
-import { formatUSD, formatBs, formatFecha, getWhatsAppUrl, getPhoneCallUrl } from '../../utils/formatters';
+import { formatMonto, formatDolares, formatFecha, getWhatsAppUrl, getPhoneCallUrl } from '../../utils/formatters';
 import { generarMensajeCobroWhatsApp } from '../../services/cuentasCobrarService';
 
 export default function CxCTable({
@@ -157,10 +157,10 @@ export default function CxCTable({
                     </td>
 
                     <td>
-                      <div style={{ fontWeight: 600 }}>{formatUSD(c.montoOriginalUSD)}</div>
+                      <div style={{ fontWeight: 600 }}>{formatMonto(c.montoOriginalUSD)}</div>
                       {c.totalAbonadoUSD > 0 && (
                         <div style={{ fontSize: '0.72rem', color: '#10B981' }}>
-                          Abonado: {formatUSD(c.totalAbonadoUSD)}
+                          Abonado: {formatMonto(c.totalAbonadoUSD)}
                         </div>
                       )}
                     </td>
@@ -173,7 +173,7 @@ export default function CxCTable({
                         </div>
                         {recargoCalculadoUSD > 0 ? (
                           <span style={{ fontSize: '0.75rem', color: '#EF4444', fontWeight: 600 }}>
-                            +{formatUSD(recargoCalculadoUSD)}
+                            +{formatMonto(recargoCalculadoUSD)}
                           </span>
                         ) : (
                           <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
@@ -192,11 +192,11 @@ export default function CxCTable({
                             color: esSolvente ? '#10B981' : esVencida ? '#EF4444' : 'var(--text-primary)',
                           }}
                         >
-                          {formatUSD(saldoCalculadoUSD)}
+                          {formatMonto(saldoCalculadoUSD)}
                         </span>
                         {tasaValor > 0 && saldoCalculadoUSD > 0 && (
                           <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                            {formatBs(saldoCalculadoBs)}
+                            Ref. {formatDolares(saldoCalculadoUSD)}
                           </span>
                         )}
                       </div>

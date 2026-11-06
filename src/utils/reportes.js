@@ -21,6 +21,7 @@
  * }
  */
 import { getEmpresaConfig } from './constants';
+import { getTasaPantalla } from './formatters';
 
 const VERDE = 'FF15803D';
 const VERDE_CLARO = 'FFE8F5EC';
@@ -29,21 +30,39 @@ const BORDE = 'FFD9DEE5';
 
 const fechaHora = () => new Date().toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' });
 
+// Los montos guardados en USD se muestran en Bs: 'usd' siempre y 'monto' cuando el
+// reporte no fija moneda. reporte.tasa manda sobre la tasa vigente (reporte histórico).
+const seConvierte = (tipo, moneda) => tipo === 'usd' || (tipo === 'monto' && !moneda);
+const tasaDe = (reporte) => Number(reporte?.tasa) || getTasaPantalla();
+
+function etiquetaMoneda(reporte) {
+  if (reporte.moneda === 'USD') return 'Dólares (USD)';
+  const hojas = reporte.hojas || [{ secciones: reporte.secciones, resumen: reporte.resumen }];
+  const convierte = hojas.some((h) => (h.resumen || []).some((i) => seConvierte(i.tipo || 'monto', reporte.moneda))
+    || (h.secciones || []).some((s) => s.columnas.some((c) => seConvierte(c.tipo, reporte.moneda))));
+  const tasa = tasaDe(reporte);
+  return convierte && tasa > 0
+    ? `Bolívares (Bs) a tasa BCV ${tasa.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : 'Bolívares (Bs)';
+}
+
 // Formato de número para Excel y para impresión según el tipo de columna
-function formatoExcel(tipo, moneda) {
-  if (tipo === 'usd' || (tipo === 'monto' && moneda !== 'VES')) return '"$"#,##0.00;[Red]-"$"#,##0.00';
-  if (tipo === 'bs' || (tipo === 'monto' && moneda === 'VES')) return '"Bs "#,##0.00;[Red]-"Bs "#,##0.00';
+function formatoExcel(tipo, moneda, tasa) {
+  if (seConvierte(tipo, moneda) && !(tasa > 0)) return '"$"#,##0.00;[Red]-"$"#,##0.00';
+  if (tipo === 'monto' && moneda === 'USD') return '"$"#,##0.00;[Red]-"$"#,##0.00';
+  if (tipo === 'bs' || tipo === 'usd' || tipo === 'monto') return '"Bs "#,##0.00;[Red]-"Bs "#,##0.00';
   if (tipo === 'numero') return '#,##0';
   if (tipo === 'porcentaje') return '0.0"%"';
   return null;
 }
 
-function formatoTexto(valor, tipo, moneda) {
+export function formatoTexto(valor, tipo, moneda, tasa = getTasaPantalla()) {
   if (valor === null || valor === undefined || valor === '') return '';
-  const n = Number(valor);
+  const convierte = seConvierte(tipo, moneda) && tasa > 0;
+  const n = Number(valor) * (convierte ? tasa : 1);
   const dos = (x) => x.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (tipo === 'usd' || (tipo === 'monto' && moneda !== 'VES')) return `${n < 0 ? '−' : ''}$ ${dos(Math.abs(n))}`;
-  if (tipo === 'bs' || (tipo === 'monto' && moneda === 'VES')) return `${n < 0 ? '−' : ''}Bs ${dos(Math.abs(n))}`;
+  if ((tipo === 'monto' && moneda === 'USD') || (seConvierte(tipo, moneda) && !convierte)) return `${n < 0 ? '−' : ''}$ ${dos(Math.abs(n))}`;
+  if (tipo === 'bs' || tipo === 'usd' || tipo === 'monto') return `${n < 0 ? '−' : ''}Bs ${dos(Math.abs(n))}`;
   if (tipo === 'numero') return n.toLocaleString('es-VE');
   if (tipo === 'porcentaje') return `${n.toLocaleString('es-VE', { maximumFractionDigits: 1 })} %`;
   if (tipo === 'fecha') {
@@ -61,7 +80,7 @@ const esNumerico = (tipo) => ['monto', 'usd', 'bs', 'numero', 'porcentaje'].incl
  */
 export function columnasDesdeFilas(filas) {
   const claves = [...new Set(filas.flatMap((f) => Object.keys(f).filter((k) => !k.startsWith('_'))))];
-  return claves.map((clave) => {
+  const columnas = claves.map((clave) => {
     const ejemplo = filas.find((f) => f[clave] !== null && f[clave] !== undefined && f[clave] !== '')?.[clave];
     const k = clave.toLowerCase();
     let tipo = 'texto';
@@ -76,6 +95,11 @@ export function columnasDesdeFilas(filas) {
     else if (/n°|nro|rif|c\.i|sku|código|codigo|factura|control|referencia|comprobante/.test(k)) tipo = 'codigo';
     return { titulo: clave, clave, tipo };
   });
+  // Las columnas en USD pasan a Bs; si la fila ya trae su equivalente en Bs, sobra la de USD
+  const enBs = (titulo) => titulo.replace(/\bUSD\b|\$/g, 'Bs');
+  return columnas
+    .filter((c) => c.tipo !== 'usd' || enBs(c.clave) === c.clave || !claves.includes(enBs(c.clave)))
+    .map((c) => (c.tipo === 'usd' ? { ...c, titulo: enBs(c.titulo) } : c));
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +107,10 @@ export function columnasDesdeFilas(filas) {
 // ---------------------------------------------------------------------------
 export async function exportarExcel(reporte) {
   const { default: ExcelJS } = await import('exceljs');
+  const enNumero = (v, tipo) => {
+    const tasa = tasaDe(reporte);
+    return seConvierte(tipo, reporte.moneda) && tasa > 0 ? Math.round(Number(v) * tasa * 100) / 100 : Number(v);
+  };
   const empresa = getEmpresaConfig();
   const libro = new ExcelJS.Workbook();
   libro.creator = empresa.nombre;
@@ -111,15 +139,15 @@ export async function exportarExcel(reporte) {
     unir(fila([`RIF ${empresa.rif} · ${empresa.direccion}`], (r) => { r.font = { size: 9, color: { argb: 'FF5B6472' } }; }));
     unir(fila([hojaDef.titulo || reporte.titulo], (r) => { r.font = { bold: true, size: 13 }; r.height = 22; }));
     if (reporte.subtitulo) unir(fila([reporte.subtitulo], (r) => { r.font = { size: 10, color: { argb: 'FF374151' } }; }));
-    unir(fila([`${reporte.moneda ? `Moneda: ${reporte.moneda === 'VES' ? 'Bolívares (Bs)' : 'Dólares (USD)'} · ` : ''}Generado: ${fechaHora()}`],
+    unir(fila([`Moneda: ${etiquetaMoneda(reporte)} · Generado: ${fechaHora()}`],
       (r) => { r.font = { size: 9, italic: true, color: { argb: 'FF6B7280' } }; }));
     hoja.addRow([]);
 
     // Cifras clave
     for (const item of hojaDef.resumen || []) {
-      const r = hoja.addRow([item.etiqueta, item.valor]);
+      const r = hoja.addRow([item.etiqueta, enNumero(item.valor, item.tipo || 'monto')]);
       r.getCell(1).font = { bold: true };
-      const fmt = formatoExcel(item.tipo || 'monto', reporte.moneda);
+      const fmt = formatoExcel(item.tipo || 'monto', reporte.moneda, tasaDe(reporte));
       if (fmt) r.getCell(2).numFmt = fmt;
       r.getCell(2).font = { bold: true, color: { argb: VERDE } };
     }
@@ -147,14 +175,14 @@ export async function exportarExcel(reporte) {
       seccion.filas.forEach((f, idx) => {
         const r = hoja.addRow(seccion.columnas.map((c) => {
           const v = f[c.clave];
-          if (esNumerico(c.tipo) && v !== '' && v !== null && v !== undefined) return Number(v);
+          if (esNumerico(c.tipo) && v !== '' && v !== null && v !== undefined) return enNumero(v, c.tipo);
           if (c.tipo === 'fecha' && v) return formatoTexto(v, 'fecha');
           return v ?? '';
         }));
         r.eachCell({ includeEmpty: true }, (celda, i) => {
           const col = seccion.columnas[i - 1];
           if (!col) return;
-          const fmt = formatoExcel(col.tipo, reporte.moneda);
+          const fmt = formatoExcel(col.tipo, reporte.moneda, tasaDe(reporte));
           if (fmt) celda.numFmt = fmt;
           celda.alignment = { vertical: 'middle', horizontal: esNumerico(col.tipo) ? 'right' : 'left' };
           celda.border = { bottom: { style: 'hair', color: { argb: BORDE } } };
@@ -189,7 +217,7 @@ export async function exportarExcel(reporte) {
     hoja.columns.forEach((col, i) => {
       const def = hojaDef.secciones.map((s) => s.columnas[i]).find(Boolean);
       if (!def) { col.width = 14; return; }
-      const largos = hojaDef.secciones.flatMap((s) => s.filas.map((f) => String(formatoTexto(f[s.columnas[i]?.clave], def.tipo, reporte.moneda)).length));
+      const largos = hojaDef.secciones.flatMap((s) => s.filas.map((f) => String(formatoTexto(f[s.columnas[i]?.clave], def.tipo, reporte.moneda, tasaDe(reporte))).length));
       col.width = def.ancho || Math.min(Math.max(def.titulo.length + 2, ...largos.map((l) => l + 2), 10), 48);
     });
     if (filaCongelada) hoja.views = [{ state: 'frozen', ySplit: filaCongelada, showGridLines: false }];
@@ -230,14 +258,14 @@ export function htmlReporte(reporte) {
       <table>
         <thead><tr>${s.columnas.map((c) => `<th class="${esNumerico(c.tipo) ? 'num' : ''}">${escapar(c.titulo)}</th>`).join('')}</tr></thead>
         <tbody>${s.filas.map((f) => `<tr class="${f._estilo || ''}">${s.columnas.map((c) =>
-          `<td class="${esNumerico(c.tipo) ? 'num' : ''} ${c.tipo === 'codigo' ? 'cod' : ''}">${escapar(formatoTexto(f[c.clave], c.tipo, reporte.moneda))}</td>`).join('')}</tr>`).join('')}
+          `<td class="${esNumerico(c.tipo) ? 'num' : ''} ${c.tipo === 'codigo' ? 'cod' : ''}">${escapar(formatoTexto(f[c.clave], c.tipo, reporte.moneda, tasaDe(reporte)))}</td>`).join('')}</tr>`).join('')}
           ${s.filas.length === 0 ? `<tr><td colspan="${s.columnas.length}" class="vacio">Sin datos para el período</td></tr>` : ''}
         </tbody>
       </table>
       ${s.nota ? `<p class="nota">${escapar(s.nota)}</p>` : ''}
     </section>`;
   const resumen = (items) => (items?.length ? `<div class="resumen">${items.map((i) =>
-    `<div class="kpi"><span>${escapar(i.etiqueta)}</span><strong>${escapar(formatoTexto(i.valor, i.tipo || 'monto', reporte.moneda))}</strong>${i.detalle ? `<small>${escapar(i.detalle)}</small>` : ''}</div>`).join('')}</div>` : '');
+    `<div class="kpi"><span>${escapar(i.etiqueta)}</span><strong>${escapar(formatoTexto(i.valor, i.tipo || 'monto', reporte.moneda, tasaDe(reporte)))}</strong>${i.detalle ? `<small>${escapar(i.detalle)}</small>` : ''}</div>`).join('')}</div>` : '');
   const muchasColumnas = hojas.some((h) => h.secciones.some((s) => s.columnas.length > 6));
 
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${escapar(reporte.titulo)}</title>
@@ -277,7 +305,7 @@ export function htmlReporte(reporte) {
 <header>
   <div><div class="empresa">${escapar(empresa.nombre)}</div><div class="datos">RIF ${escapar(empresa.rif)} · ${escapar(empresa.direccion)}</div></div>
   <div class="titulo"><h1>${escapar(reporte.titulo)}</h1>
-    <div class="sub">${escapar(reporte.subtitulo || '')}${reporte.moneda ? ` · ${reporte.moneda === 'VES' ? 'Bolívares (Bs)' : 'Dólares (USD)'}` : ''}</div></div>
+    <div class="sub">${escapar(reporte.subtitulo || '')} · ${escapar(etiquetaMoneda(reporte))}</div></div>
 </header>
 ${hojas.map((h) => `${h.titulo && hojas.length > 1 ? `<h2 style="font-size:14px;margin:18px 0 8px">${escapar(h.titulo)}</h2>` : ''}${resumen(h.resumen)}${h.secciones.map(tabla).join('')}`).join('')}
 <footer>

@@ -17,6 +17,7 @@ import { fetchBalanceComprobacion } from '../../services/contabilidadService';
 
 export default function BalanceComprobacion() {
   const [datos, setDatos] = useState([]);
+  const [moneda, setMoneda] = useState('VES'); // 'VES' | 'USD'
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [fechaDesde, setFechaDesde] = useState('');
@@ -45,6 +46,8 @@ export default function BalanceComprobacion() {
     `$${Number(amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const formatBolivares = (amount) =>
     `Bs. ${Number(amount || 0).toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const esVes = moneda === 'VES';
+  const fmt = esVes ? formatBolivares : formatMoney;
 
   // Filter by search
   const datosFiltrados = useMemo(() => {
@@ -89,16 +92,35 @@ export default function BalanceComprobacion() {
     };
   }, [datosFiltrados]);
 
+  // Lo que se muestra según la moneda elegida: en Bs, los valores reales de cada asiento
+  const cuentasVista = useMemo(() => (esVes
+    ? datosFiltrados.map((c) => ({
+      ...c,
+      totalDebe: c.totalDebeVes,
+      totalHaber: c.totalHaberVes,
+      saldoDeudor: c.saldoDeudorVes,
+      saldoAcreedor: c.saldoAcreedorVes,
+    }))
+    : datosFiltrados), [datosFiltrados, esVes]);
+  const vista = esVes
+    ? {
+      totalDebe: totales.totalDebeVes,
+      totalHaber: totales.totalHaberVes,
+      totalSaldoDeudor: totales.totalSaldoDeudorVes,
+      totalSaldoAcreedor: totales.totalSaldoAcreedorVes,
+    }
+    : totales;
+
   // Modelo común para Excel e impresión
   const construirReporte = () => {
     const columnas = [
       { titulo: 'Código', clave: 'codigo', tipo: 'codigo' },
       { titulo: 'Cuenta', clave: 'nombre', tipo: 'texto', ancho: 40 },
       { titulo: 'Tipo', clave: 'tipo', tipo: 'texto' },
-      { titulo: 'Debe', clave: 'totalDebe', tipo: 'usd' },
-      { titulo: 'Haber', clave: 'totalHaber', tipo: 'usd' },
-      { titulo: 'Saldo deudor', clave: 'saldoDeudor', tipo: 'usd' },
-      { titulo: 'Saldo acreedor', clave: 'saldoAcreedor', tipo: 'usd' },
+      { titulo: 'Debe', clave: 'totalDebe', tipo: 'monto' },
+      { titulo: 'Haber', clave: 'totalHaber', tipo: 'monto' },
+      { titulo: 'Saldo deudor', clave: 'saldoDeudor', tipo: 'monto' },
+      { titulo: 'Saldo acreedor', clave: 'saldoAcreedor', tipo: 'monto' },
     ];
     const columnasBs = [
       { titulo: 'Código', clave: 'codigo', tipo: 'codigo' },
@@ -112,25 +134,26 @@ export default function BalanceComprobacion() {
     return {
       titulo: 'Balance de Comprobación',
       subtitulo: `Sumas y saldos del ${periodo}`,
-      archivo: `Balance_de_Comprobacion_${fechaHasta || new Date().toLocaleDateString('en-CA')}`,
+      moneda,
+      archivo: `Balance_de_Comprobacion_${fechaHasta || new Date().toLocaleDateString('en-CA')}_${moneda}`,
       resumen: [
-        { etiqueta: 'Total debe', valor: totales.totalDebe, tipo: 'usd' },
-        { etiqueta: 'Total haber', valor: totales.totalHaber, tipo: 'usd' },
+        { etiqueta: 'Total debe', valor: vista.totalDebe, tipo: 'monto' },
+        { etiqueta: 'Total haber', valor: vista.totalHaber, tipo: 'monto' },
         { etiqueta: 'Sumas iguales', valor: totales.sumasCuadran ? 'Sí' : 'No', tipo: 'texto' },
         { etiqueta: 'Saldos iguales', valor: totales.saldosCuadran ? 'Sí' : 'No', tipo: 'texto' },
       ],
-      hojas: [
-        {
-          nombre: 'En USD', titulo: 'Balance de Comprobación (USD)',
-          secciones: [{ columnas, filas: [...datosFiltrados, {
-            codigo: '', nombre: 'Totales', tipo: '', totalDebe: totales.totalDebe, totalHaber: totales.totalHaber,
-            saldoDeudor: totales.totalSaldoDeudor, saldoAcreedor: totales.totalSaldoAcreedor, _estilo: 'total' }] }],
-        },
-        {
+      hojas: [esVes
+        ? {
           nombre: 'En Bs', titulo: 'Balance de Comprobación (Bs)',
           secciones: [{ columnas: columnasBs, filas: [...datosFiltrados, {
             codigo: '', nombre: 'Totales', totalDebeVes: totales.totalDebeVes, totalHaberVes: totales.totalHaberVes,
             saldoDeudorVes: totales.totalSaldoDeudorVes, saldoAcreedorVes: totales.totalSaldoAcreedorVes, _estilo: 'total' }] }],
+        }
+        : {
+          nombre: 'En USD', titulo: 'Balance de Comprobación (USD)',
+          secciones: [{ columnas, filas: [...datosFiltrados, {
+            codigo: '', nombre: 'Totales', tipo: '', totalDebe: totales.totalDebe, totalHaber: totales.totalHaber,
+            saldoDeudor: totales.totalSaldoDeudor, saldoAcreedor: totales.totalSaldoAcreedor, _estilo: 'total' }] }],
         },
       ],
       calidad: {
@@ -184,6 +207,8 @@ export default function BalanceComprobacion() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button className={`btn ${esVes ? 'btn--primary' : 'btn--secondary'}`} onClick={() => setMoneda('VES')}>VES (Bs.)</button>
+          <button className={`btn ${esVes ? 'btn--secondary' : 'btn--primary'}`} onClick={() => setMoneda('USD')}>USD ($)</button>
           <button className="btn btn--secondary" onClick={loadData} title="Refrescar">
             <HiOutlineArrowPath /> Refrescar
           </button>
@@ -204,8 +229,7 @@ export default function BalanceComprobacion() {
           </div>
           <div className="stat-card__content">
             <span className="stat-card__label">Total Debe</span>
-            <span className="stat-card__value" style={{ color: 'var(--primary)', fontSize: '1.2rem' }}>{formatMoney(totales.totalDebe)}</span>
-            <span className="stat-card__sub">{formatBolivares(totales.totalDebeVes)}</span>
+            <span className="stat-card__value" style={{ color: 'var(--primary)', fontSize: '1.2rem' }}>{fmt(vista.totalDebe)}</span>
           </div>
         </div>
         <div className="stat-card">
@@ -214,8 +238,7 @@ export default function BalanceComprobacion() {
           </div>
           <div className="stat-card__content">
             <span className="stat-card__label">Total Haber</span>
-            <span className="stat-card__value" style={{ color: 'var(--info)', fontSize: '1.2rem' }}>{formatMoney(totales.totalHaber)}</span>
-            <span className="stat-card__sub">{formatBolivares(totales.totalHaberVes)}</span>
+            <span className="stat-card__value" style={{ color: 'var(--info)', fontSize: '1.2rem' }}>{fmt(vista.totalHaber)}</span>
           </div>
         </div>
         <div className="stat-card">
@@ -224,8 +247,7 @@ export default function BalanceComprobacion() {
           </div>
           <div className="stat-card__content">
             <span className="stat-card__label">Saldos Deudores</span>
-            <span className="stat-card__value" style={{ color: '#22C55E', fontSize: '1.2rem' }}>{formatMoney(totales.totalSaldoDeudor)}</span>
-            <span className="stat-card__sub">{formatBolivares(totales.totalSaldoDeudorVes)}</span>
+            <span className="stat-card__value" style={{ color: '#22C55E', fontSize: '1.2rem' }}>{fmt(vista.totalSaldoDeudor)}</span>
           </div>
         </div>
         <div className="stat-card">
@@ -234,8 +256,7 @@ export default function BalanceComprobacion() {
           </div>
           <div className="stat-card__content">
             <span className="stat-card__label">Saldos Acreedores</span>
-            <span className="stat-card__value" style={{ color: 'var(--warning)', fontSize: '1.2rem' }}>{formatMoney(totales.totalSaldoAcreedor)}</span>
-            <span className="stat-card__sub">{formatBolivares(totales.totalSaldoAcreedorVes)}</span>
+            <span className="stat-card__value" style={{ color: 'var(--warning)', fontSize: '1.2rem' }}>{fmt(vista.totalSaldoAcreedor)}</span>
           </div>
         </div>
       </div>
@@ -372,14 +393,14 @@ export default function BalanceComprobacion() {
                   <th style={{ width: '100px' }}>Código</th>
                   <th>Cuenta Contable</th>
                   <th style={{ width: '80px', textAlign: 'center' }}>Tipo</th>
-                  <th style={{ width: '130px', textAlign: 'right' }}>Debe (USD)</th>
-                  <th style={{ width: '130px', textAlign: 'right' }}>Haber (USD)</th>
+                  <th style={{ width: '130px', textAlign: 'right' }}>Debe ({esVes ? 'Bs.' : 'USD'})</th>
+                  <th style={{ width: '130px', textAlign: 'right' }}>Haber ({esVes ? 'Bs.' : 'USD'})</th>
                   <th style={{ width: '130px', textAlign: 'right' }}>Saldo Deudor</th>
                   <th style={{ width: '130px', textAlign: 'right' }}>Saldo Acreedor</th>
                 </tr>
               </thead>
               <tbody>
-                {datosFiltrados.map((cuenta) => (
+                {cuentasVista.map((cuenta) => (
                   <tr key={cuenta.id}>
                     <td style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--primary)' }}>
                       {cuenta.codigo}
@@ -409,28 +430,28 @@ export default function BalanceComprobacion() {
                       fontWeight: cuenta.totalDebe > 0 ? 600 : 400,
                       color: cuenta.totalDebe > 0 ? 'var(--text-primary)' : 'var(--text-muted)',
                     }}>
-                      {cuenta.totalDebe > 0 ? formatMoney(cuenta.totalDebe) : '—'}
+                      {cuenta.totalDebe > 0 ? fmt(cuenta.totalDebe) : '—'}
                     </td>
                     <td style={{
                       textAlign: 'right',
                       fontWeight: cuenta.totalHaber > 0 ? 600 : 400,
                       color: cuenta.totalHaber > 0 ? 'var(--text-primary)' : 'var(--text-muted)',
                     }}>
-                      {cuenta.totalHaber > 0 ? formatMoney(cuenta.totalHaber) : '—'}
+                      {cuenta.totalHaber > 0 ? fmt(cuenta.totalHaber) : '—'}
                     </td>
                     <td style={{
                       textAlign: 'right',
                       fontWeight: cuenta.saldoDeudor > 0 ? 700 : 400,
                       color: cuenta.saldoDeudor > 0 ? '#22C55E' : 'var(--text-muted)',
                     }}>
-                      {cuenta.saldoDeudor > 0 ? formatMoney(cuenta.saldoDeudor) : '—'}
+                      {cuenta.saldoDeudor > 0 ? fmt(cuenta.saldoDeudor) : '—'}
                     </td>
                     <td style={{
                       textAlign: 'right',
                       fontWeight: cuenta.saldoAcreedor > 0 ? 700 : 400,
                       color: cuenta.saldoAcreedor > 0 ? 'var(--warning)' : 'var(--text-muted)',
                     }}>
-                      {cuenta.saldoAcreedor > 0 ? formatMoney(cuenta.saldoAcreedor) : '—'}
+                      {cuenta.saldoAcreedor > 0 ? fmt(cuenta.saldoAcreedor) : '—'}
                     </td>
                   </tr>
                 ))}
@@ -445,16 +466,16 @@ export default function BalanceComprobacion() {
                     TOTALES ({datosFiltrados.length} cuentas):
                   </td>
                   <td style={{ textAlign: 'right', color: 'var(--primary)' }}>
-                    {formatMoney(totales.totalDebe)}
+                    {fmt(vista.totalDebe)}
                   </td>
                   <td style={{ textAlign: 'right', color: 'var(--info)' }}>
-                    {formatMoney(totales.totalHaber)}
+                    {fmt(vista.totalHaber)}
                   </td>
                   <td style={{ textAlign: 'right', color: '#22C55E' }}>
-                    {formatMoney(totales.totalSaldoDeudor)}
+                    {fmt(vista.totalSaldoDeudor)}
                   </td>
                   <td style={{ textAlign: 'right', color: 'var(--warning)' }}>
-                    {formatMoney(totales.totalSaldoAcreedor)}
+                    {fmt(vista.totalSaldoAcreedor)}
                   </td>
                 </tr>
 
@@ -468,14 +489,14 @@ export default function BalanceComprobacion() {
                     fontWeight: 700,
                     color: totales.sumasCuadran ? '#22C55E' : '#EF4444',
                   }}>
-                    {totales.sumasCuadran ? '✓ Cuadrado' : formatMoney(Math.abs(totales.totalDebe - totales.totalHaber))}
+                    {totales.sumasCuadran ? '✓ Cuadrado' : fmt(Math.abs(vista.totalDebe - vista.totalHaber))}
                   </td>
                   <td colSpan="2" style={{
                     textAlign: 'center',
                     fontWeight: 700,
                     color: totales.saldosCuadran ? '#22C55E' : '#EF4444',
                   }}>
-                    {totales.saldosCuadran ? '✓ Cuadrado' : formatMoney(Math.abs(totales.totalSaldoDeudor - totales.totalSaldoAcreedor))}
+                    {totales.saldosCuadran ? '✓ Cuadrado' : fmt(Math.abs(vista.totalSaldoDeudor - vista.totalSaldoAcreedor))}
                   </td>
                 </tr>
               </tbody>

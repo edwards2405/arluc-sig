@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { formatUSD, formatFecha } from '../utils/formatters';
+import { formatMonto, formatFecha } from '../utils/formatters';
 import { ESTADOS_ORDEN } from '../utils/constants';
 import toast from 'react-hot-toast';
 import Pagination from '../components/common/Pagination';
@@ -131,14 +131,14 @@ export default function OrdenesCompra() {
         <div className="table-container">
           <table className="table">
             <thead>
-              <tr><th>N° Orden</th><th>Proveedor</th><th>Total USD</th><th>Estado</th><th>Fecha</th><th>Acciones</th></tr>
+              <tr><th>N° Orden</th><th>Proveedor</th><th>Total</th><th>Estado</th><th>Fecha</th><th>Acciones</th></tr>
             </thead>
             <tbody>
               {ordenesPaginadas.map(o => (
                 <tr key={o.id}>
                   <td><code>{o.numero_orden}</code></td>
                   <td>{o.proveedores?.nombre}</td>
-                  <td>{formatUSD(o.total_usd)}</td>
+                  <td>{formatMonto(o.total_usd)}</td>
                   <td>
                     <span className={`badge badge--${o.estado === 'recibida' ? 'success' : o.estado === 'cancelada' ? 'danger' : 'warning'}`}>
                       {o.estado.charAt(0).toUpperCase() + o.estado.slice(1)}
@@ -186,14 +186,14 @@ export default function OrdenesCompra() {
                     <tr key={d.id}>
                       <td>{d.productos?.nombre}</td>
                       <td>{d.cantidad}</td>
-                      <td>{formatUSD(d.precio_unitario_usd)}</td>
-                      <td>{formatUSD(d.subtotal)}</td>
+                      <td>{formatMonto(d.precio_unitario_usd)}</td>
+                      <td>{formatMonto(d.subtotal)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
               <div className="pos-totals__row pos-totals__row--total" style={{ marginTop: '1rem' }}>
-                <span>Total:</span><span>{formatUSD(showDetalle.total_usd)}</span>
+                <span>Total:</span><span>{formatMonto(showDetalle.total_usd)}</span>
               </div>
               <button className="btn btn--ghost btn--full" onClick={() => setShowDetalle(null)} style={{ marginTop: '1rem' }}>Cerrar</button>
             </div>
@@ -247,7 +247,7 @@ export default function OrdenesCompra() {
               <button type="button" className="btn btn--ghost btn--sm" onClick={addItem}><HiOutlinePlus /> Agregar producto</button>
 
               <div className="pos-totals__row pos-totals__row--total" style={{ marginTop: '1rem' }}>
-                <span>Total:</span><span>{formatUSD(totalOrden)}</span>
+                <span>Total:</span><span>{formatMonto(totalOrden)}</span>
               </div>
 
               <button type="submit" className="btn btn--primary btn--full" style={{ marginTop: '1rem' }}>Crear Orden de Compra</button>

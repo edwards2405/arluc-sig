@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { formatUSD, formatBs, formatFecha } from '../../../utils/formatters';
+import { formatMonto, formatDolares, formatFecha } from '../../../utils/formatters';
 import { HiOutlineCreditCard } from 'react-icons/hi2';
 import Pagination from '../../common/Pagination';
 
@@ -24,7 +24,7 @@ export default function CxCCreditsReport({ cuentas = [], tasaValor = 0 }) {
         <div className="card" style={{ padding: '1rem' }}>
           <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Crédito Total Otorgado (Directo)</span>
           <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)', marginTop: '0.2rem' }}>
-            {formatUSD(totalOtorgadoUSD)}
+            {formatMonto(totalOtorgadoUSD)}
           </div>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
             {cuentas.length} transacciones a crédito
@@ -34,7 +34,7 @@ export default function CxCCreditsReport({ cuentas = [], tasaValor = 0 }) {
         <div className="card" style={{ padding: '1rem' }}>
           <span style={{ fontSize: '0.78rem', color: '#10B981' }}>Crédito Recuperado (Cobrado)</span>
           <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#10B981', marginTop: '0.2rem' }}>
-            {formatUSD(totalAbonadoUSD)}
+            {formatMonto(totalAbonadoUSD)}
           </div>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
             {totalOtorgadoUSD > 0 ? ((totalAbonadoUSD / totalOtorgadoUSD) * 100).toFixed(1) : 0}% recuperado
@@ -44,10 +44,10 @@ export default function CxCCreditsReport({ cuentas = [], tasaValor = 0 }) {
         <div className="card" style={{ padding: '1rem' }}>
           <span style={{ fontSize: '0.78rem', color: '#6366F1' }}>Exposición Neta Pendiente</span>
           <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#6366F1', marginTop: '0.2rem' }}>
-            {formatUSD(totalRiesgoPendienteUSD)}
+            {formatMonto(totalRiesgoPendienteUSD)}
           </div>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-            {tasaValor > 0 ? formatBs(totalRiesgoPendienteUSD * tasaValor) : 'Capital en calle'}
+            {tasaValor > 0 ? `Ref. ${formatDolares(totalRiesgoPendienteUSD)}` : 'Capital en calle'}
           </span>
         </div>
       </div>
@@ -92,12 +92,12 @@ export default function CxCCreditsReport({ cuentas = [], tasaValor = 0 }) {
                         {c.cliente?.documento_identidad || 'N/A'}
                       </div>
                     </td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatUSD(c.montoOriginalUSD)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatMonto(c.montoOriginalUSD)}</td>
                     <td style={{ textAlign: 'right', color: '#10B981' }}>
-                      {c.totalAbonadoUSD > 0 ? formatUSD(c.totalAbonadoUSD) : '—'}
+                      {c.totalAbonadoUSD > 0 ? formatMonto(c.totalAbonadoUSD) : '—'}
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 700, color: c.saldoTotalUSD > 0 ? '#6366F1' : '#10B981' }}>
-                      {formatUSD(c.saldoTotalUSD)}
+                      {formatMonto(c.saldoTotalUSD)}
                     </td>
                     <td style={{ textAlign: 'center' }}>{c.diasTranscurridos} d</td>
                     <td style={{ textAlign: 'center' }}>

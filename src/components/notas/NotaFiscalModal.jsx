@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
-import { formatUSD, formatFecha } from '../../utils/formatters';
+import { formatMonto, formatBs, formatDolares, formatFecha } from '../../utils/formatters';
 import { getEmpresaConfig } from '../../utils/constants';
 
 const REINTEGROS = [
@@ -45,11 +45,11 @@ ${fila('Cliente', `${nota.cliente_nombre || 'Consumidor final'} ${nota.cliente_d
 ${fila('Concepto', nota.concepto.replace('_', ' '))}${fila('Motivo', nota.motivo)}
 </table><hr>
 <table style="width:100%;font-size:13px">
-${fila('Base imponible', formatUSD(nota.base_imponible_usd))}${Number(nota.exento_usd) > 0 ? fila('Exento', formatUSD(nota.exento_usd)) : ''}
-${fila(`IVA ${Number(nota.alicuota_iva)}%`, formatUSD(nota.iva_usd))}${fila('<b>Total</b>', `<b>${formatUSD(nota.total_usd)}</b>`)}
-${Number(nota.iva_retenido_usd) > 0 ? fila('IVA retenido por el comprador', formatUSD(nota.iva_retenido_usd)) : ''}
-${fila(nota.tipo === 'CREDITO' ? 'Reintegrado' : 'Cobrado', `${formatUSD(nota.monto_liquidado_usd)} (${nota.metodo})`)}
-${fila('Total en Bs (tasa ' + Number(nota.tasa).toFixed(4) + ')', 'Bs ' + Number(nota.total_bs).toLocaleString('es-VE', { minimumFractionDigits: 2 }))}
+${fila('Base imponible', formatMonto(nota.base_imponible_usd, nota.tasa))}${Number(nota.exento_usd) > 0 ? fila('Exento', formatMonto(nota.exento_usd, nota.tasa)) : ''}
+${fila(`IVA ${Number(nota.alicuota_iva)}%`, formatMonto(nota.iva_usd, nota.tasa))}${fila('<b>Total</b>', `<b>${formatBs(nota.total_bs)}</b>`)}
+${Number(nota.iva_retenido_usd) > 0 ? fila('IVA retenido por el comprador', formatMonto(nota.iva_retenido_usd, nota.tasa)) : ''}
+${fila(nota.tipo === 'CREDITO' ? 'Reintegrado' : 'Cobrado', `${formatMonto(nota.monto_liquidado_usd, nota.tasa)} (Ref. ${formatDolares(nota.monto_liquidado_usd)}, ${nota.metodo})`)}
+${fila('Ref. total en USD (tasa ' + Number(nota.tasa).toFixed(4) + ')', formatDolares(nota.total_usd))}
 </table>
 <script>window.onload = () => window.print();</script></body></html>`);
   ventana.document.close();
@@ -57,6 +57,9 @@ ${fila('Total en Bs (tasa ' + Number(nota.tasa).toFixed(4) + ')', 'Bs ' + Number
 
 export default function NotaFiscalModal({ factura, tipo, onClose, onEmitida }) {
   const esCredito = tipo === 'CREDITO';
+  // La NC se valora a la tasa de la factura; la ND es nueva y va a la tasa vigente
+  const tasaFactura = factura.tasas_cambio?.tasa_usd_bs || (factura.total_usd > 0 ? factura.total_bs / factura.total_usd : 0);
+  const tasaNota = esCredito ? tasaFactura : undefined;
   const [saldo, setSaldo] = useState(null);
   const [concepto, setConcepto] = useState(esCredito ? 'DEVOLUCION' : 'CARGO_ADICIONAL');
   const [cantidades, setCantidades] = useState({});
@@ -114,7 +117,7 @@ export default function NotaFiscalModal({ factura, tipo, onClose, onEmitida }) {
       toast.error(error.message);
       return;
     }
-    toast.success(`${data.numero} emitida por ${formatUSD(data.total_usd)}`);
+    toast.success(`${data.numero} emitida por ${formatBs(data.total_bs)}`);
     imprimirNota(data, factura);
     onEmitida?.(data);
   }
@@ -151,7 +154,7 @@ export default function NotaFiscalModal({ factura, tipo, onClose, onEmitida }) {
               <select value={metodo} onChange={(e) => setMetodo(e.target.value)}>
                 {metodos.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
               </select>
-              {metodo === 'credito_cxc' && <small>Saldo a crédito de la factura: {formatUSD(saldo.cxc_pendiente_usd)}</small>}
+              {metodo === 'credito_cxc' && <small>Saldo a crédito de la factura: {formatMonto(saldo.cxc_pendiente_usd, tasaNota)}</small>}
             </div>
           </div>
 
@@ -162,7 +165,7 @@ export default function NotaFiscalModal({ factura, tipo, onClose, onEmitida }) {
                 <tbody>
                   {saldo.productos.map((p) => (
                     <tr key={p.producto_id}>
-                      <td>{p.producto_nombre}<div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{formatUSD(p.precio_unitario_usd)} c/u</div></td>
+                      <td>{p.producto_nombre}<div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{formatMonto(p.precio_unitario_usd, tasaNota)} c/u</div></td>
                       <td>{p.vendidos}</td>
                       <td>{p.devueltos}</td>
                       <td style={{ width: '6rem' }}>
@@ -180,7 +183,8 @@ export default function NotaFiscalModal({ factura, tipo, onClose, onEmitida }) {
             <div className="form-group">
               <label>Monto (base sin IVA, USD)</label>
               <input type="number" step="0.01" min="0.01" required value={montoBase} onChange={(e) => setMontoBase(e.target.value)} />
-              {esCredito && <small>Disponible para rebajar: {formatUSD(saldo.base_disponible_usd)}</small>}
+              <small>Equivale a {formatMonto(base, tasaNota)}</small>
+              {esCredito && <small> · Disponible para rebajar: {formatMonto(saldo.base_disponible_usd, tasaNota)}</small>}
             </div>
           )}
 
@@ -190,14 +194,14 @@ export default function NotaFiscalModal({ factura, tipo, onClose, onEmitida }) {
           </div>
 
           <div className="pos-totals">
-            <div className="pos-totals__row"><span>Base imponible</span><span>{formatUSD(base)}</span></div>
-            <div className="pos-totals__row"><span>IVA {alicuota}%</span><span>{formatUSD(iva)}</span></div>
-            <div className="pos-totals__row pos-totals__row--total"><span>Total de la nota</span><span>{formatUSD(total)}</span></div>
+            <div className="pos-totals__row"><span>Base imponible</span><span>{formatMonto(base, tasaNota)}</span></div>
+            <div className="pos-totals__row"><span>IVA {alicuota}%</span><span>{formatMonto(iva, tasaNota)}</span></div>
+            <div className="pos-totals__row pos-totals__row--total"><span>Total de la nota</span><span>{formatMonto(total, tasaNota)}</span></div>
             {retencion > 0 && (
-              <div className="pos-totals__row"><span>Retención IVA {pctRet}% del cliente</span><span>{formatUSD(retencion)}</span></div>
+              <div className="pos-totals__row"><span>Retención IVA {pctRet}% del cliente</span><span>{formatMonto(retencion, tasaNota)}</span></div>
             )}
             <div className="pos-totals__row" style={{ fontWeight: 700 }}>
-              <span>{esCredito ? 'A reintegrar' : 'A cobrar'}</span><span>{formatUSD(liquidado)}</span>
+              <span>{esCredito ? 'A reintegrar' : 'A cobrar'}</span><span>{formatMonto(liquidado)}</span>
             </div>
           </div>
           <small style={{ color: 'var(--text-secondary)' }}>

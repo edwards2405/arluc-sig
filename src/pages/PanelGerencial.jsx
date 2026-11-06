@@ -10,7 +10,7 @@ import {
 } from 'react-icons/hi2';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { formatUSD, formatBs, formatFecha } from '../utils/formatters';
+import { formatMonto, formatBs, formatFecha, getTasaPantalla } from '../utils/formatters';
 import Pagination from '../components/common/Pagination';
 import usePaginacion from '../hooks/usePaginacion';
 
@@ -79,6 +79,13 @@ function rangoPreset(preset) {
 }
 
 const num = (v, d = 2) => Number(v || 0).toLocaleString('es-VE', { minimumFractionDigits: d, maximumFractionDigits: d });
+// Eje de gráficos en Bs con notación compacta: el monto completo no cabe en el eje
+const ejeMonto = (usd) => {
+  const tasa = getTasaPantalla();
+  return tasa > 0
+    ? `Bs ${new Intl.NumberFormat('es-VE', { notation: 'compact', maximumFractionDigits: 1 }).format(usd * tasa)}`
+    : formatMonto(usd);
+};
 
 function Delta({ valor, sufijo = '% vs. período anterior' }) {
   if (valor === null || valor === undefined) return <span>Sin período anterior comparable</span>;
@@ -230,6 +237,7 @@ export default function PanelGerencial() {
             Indicadores del {formatFecha(rango.desde)} al {formatFecha(rango.hasta)} comparados con el
             período anterior equivalente ({formatFecha(r.periodo?.anterior_desde)} – {formatFecha(r.periodo?.anterior_hasta)})
           </p>
+          <p className="text-xs" style={{ color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Montos en Bs a la tasa BCV vigente.</p>
         </div>
         <button className="btn btn--secondary" onClick={cargar} disabled={loading}>
           <HiOutlineArrowPath /> {loading ? 'Actualizando...' : 'Actualizar'}
@@ -251,17 +259,17 @@ export default function PanelGerencial() {
 
       {/* KPIs principales */}
       <div className="sig-fila">
-        <Kpi label="Ventas netas (sin IVA)" valor={formatUSD(act.ventas_netas)}>
+        <Kpi label="Ventas netas (sin IVA)" valor={formatMonto(act.ventas_netas)}>
           <Delta valor={varPct.ventas_netas} />
         </Kpi>
-        <Kpi label="Margen bruto" valor={formatUSD(act.margen_bruto)}>
+        <Kpi label="Margen bruto" valor={formatMonto(act.margen_bruto)}>
           <span>{num(act.margen_pct, 1)} % de margen</span> · <Delta valor={varPct.margen_bruto} sufijo="%" />
         </Kpi>
-        <Kpi label="Utilidad neta contable" valor={formatUSD(res.utilidad_neta)}>
-          <span>Gastos {formatUSD(res.gastos)}</span>
+        <Kpi label="Utilidad neta contable" valor={formatMonto(res.utilidad_neta)}>
+          <span>Gastos {formatMonto(res.gastos)}</span>
           <span>· Dif. cambiario {formatBs(res.diferencial_cambiario_bs)}</span>
         </Kpi>
-        <Kpi label="Ticket promedio" valor={formatUSD(act.ticket_promedio)}>
+        <Kpi label="Ticket promedio" valor={formatMonto(act.ticket_promedio)}>
           <Delta valor={varPct.ticket_promedio} />
         </Kpi>
         <Kpi label="Facturas emitidas" valor={num(act.facturas, 0)}>
@@ -305,8 +313,8 @@ export default function PanelGerencial() {
                   </div>
                 )}
                 <div className="sig-kpi__sub">
-                  Vendido {formatUSD(m.vendido)}{m.meta && <> de {formatUSD(m.meta)} ({num(m.cumplimiento_pct, 1)} %)</>}
-                  {' · '}Proyección al cierre {formatUSD(m.proyeccion_cierre)}
+                  Vendido {formatMonto(m.vendido)}{m.meta && <> de {formatMonto(m.meta)} ({num(m.cumplimiento_pct, 1)} %)</>}
+                  {' · '}Proyección al cierre {formatMonto(m.proyeccion_cierre)}
                   {puedeEditarMetas && (
                     <button className="btn btn--ghost btn--xs" onClick={() => editarMeta(m)} title="Asignar o cambiar la meta">
                       <HiOutlinePencilSquare /> Meta
@@ -321,15 +329,15 @@ export default function PanelGerencial() {
       </div>
 
       <div className="sig-fila sig-fila--2">
-        {/* Ventas y margen diarios: misma unidad (USD), un solo eje */}
+        {/* Ventas y margen diarios: misma unidad (Bs), un solo eje */}
         <div className="card">
-          <h3 className="card__title">Ventas netas y margen bruto por día (USD)</h3>
+          <h3 className="card__title">Ventas netas y margen bruto por día (Bs)</h3>
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={serieDiaria} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid stroke="var(--grid)" vertical={false} />
               <XAxis dataKey="dia" stroke="var(--eje)" tick={{ fontSize: 11 }} minTickGap={18} />
-              <YAxis stroke="var(--eje)" tick={{ fontSize: 11 }} width={56} />
-              <Tooltip {...tooltipStyle} formatter={(v, n) => [formatUSD(v), n]} />
+              <YAxis stroke="var(--eje)" tick={{ fontSize: 11 }} width={76} tickFormatter={ejeMonto} />
+              <Tooltip {...tooltipStyle} formatter={(v, n) => [formatMonto(v), n]} />
               <Legend />
               <Line type="monotone" dataKey="ventas" name="Ventas netas" stroke="var(--serie-1)" strokeWidth={2} dot={false} activeDot={{ r: 5 }} />
               <Line type="monotone" dataKey="margen" name="Margen bruto" stroke="var(--serie-2)" strokeWidth={2} dot={false} activeDot={{ r: 5 }} />
@@ -344,9 +352,9 @@ export default function PanelGerencial() {
             <ComposedChart data={serieProyeccion} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid stroke="var(--grid)" vertical={false} />
               <XAxis dataKey="semana" stroke="var(--eje)" tick={{ fontSize: 11 }} />
-              <YAxis stroke="var(--eje)" tick={{ fontSize: 11 }} width={56} />
+              <YAxis stroke="var(--eje)" tick={{ fontSize: 11 }} width={76} tickFormatter={ejeMonto} />
               <Tooltip {...tooltipStyle}
-                formatter={(v, _n, item) => [formatUSD(v), item.payload.tipo === 'REAL' ? 'Venta real' : 'Proyección']} />
+                formatter={(v, _n, item) => [formatMonto(v), item.payload.tipo === 'REAL' ? 'Venta real' : 'Proyección']} />
               <Bar dataKey="ventas" name="Ventas netas por semana" radius={[4, 4, 0, 0]} maxBarSize={36}>
                 {serieProyeccion.map((p, i) => (
                   <Cell key={i} fill="var(--serie-1)" fillOpacity={p.tipo === 'REAL' ? 1 : 0.35}
@@ -376,30 +384,30 @@ export default function PanelGerencial() {
             ayuda={`Cartera / ventas a crédito diarias. El crédito es ${num(cart.credito_pct_ventas, 1)} % de lo facturado.`}
             estado={cart.dso_dias <= 20 ? 'VERDE' : cart.dso_dias <= 35 ? 'AMARILLO' : 'ROJO'} />
           <Indicador nombre="Morosidad" valor={`${num(cart.morosidad_pct, 1)} %`}
-            ayuda={`${cart.cuentas_vencidas} cuenta(s) vencida(s) por ${formatUSD(cart.cxc_vencida)} de ${formatUSD(cart.cxc_pendiente)}.`}
+            ayuda={`${cart.cuentas_vencidas} cuenta(s) vencida(s) por ${formatMonto(cart.cxc_vencida)} de ${formatMonto(cart.cxc_pendiente)}.`}
             estado={cart.morosidad_pct <= 10 ? 'VERDE' : cart.morosidad_pct <= 25 ? 'AMARILLO' : 'ROJO'} />
           <Indicador nombre="Rotación de inventario" valor={`${num(inv.rotacion_anual, 1)} veces/año`}
-            ayuda={`Inventario a costo ${formatUSD(inv.valor_costo)} · cubre ${num(inv.dias_inventario, 0)} días de venta.`} />
-          <Indicador nombre="Cuentas por pagar" valor={formatUSD(fin.cxp_pendiente)}
-            ayuda={`Cashea por liquidar a la tienda: ${formatUSD(cart.cashea_por_cobrar)}.`} />
+            ayuda={`Inventario a costo ${formatMonto(inv.valor_costo)} · cubre ${num(inv.dias_inventario, 0)} días de venta.`} />
+          <Indicador nombre="Cuentas por pagar" valor={formatMonto(fin.cxp_pendiente)}
+            ayuda={`Cashea por liquidar a la tienda: ${formatMonto(cart.cashea_por_cobrar)}.`} />
         </div>
 
         {/* Medios de cobro: una sola serie, magnitud */}
         <div className="card">
-          <h3 className="card__title">Mezcla de medios de cobro (USD)</h3>
+          <h3 className="card__title">Mezcla de medios de cobro (Bs)</h3>
           <ResponsiveContainer width="100%" height={Math.max(180, metodos.length * 34)}>
             <BarChart data={metodos} layout="vertical" margin={{ top: 4, right: 70, left: 8, bottom: 0 }}>
               <CartesianGrid stroke="var(--grid)" horizontal={false} />
-              <XAxis type="number" stroke="var(--eje)" tick={{ fontSize: 11 }} />
+              <XAxis type="number" stroke="var(--eje)" tick={{ fontSize: 11 }} tickFormatter={ejeMonto} />
               <YAxis type="category" dataKey="metodo" stroke="var(--eje)" tick={{ fontSize: 11 }} width={130} />
               <Tooltip {...tooltipStyle}
-                formatter={(v) => [`${formatUSD(v)} (${num((100 * v) / totalMetodos, 1)} %)`, 'Cobrado']} />
+                formatter={(v) => [`${formatMonto(v)} (${num((100 * v) / totalMetodos, 1)} %)`, 'Cobrado']} />
               <Bar dataKey="monto" fill="var(--serie-1)" radius={[0, 4, 4, 0]} maxBarSize={22}
                 label={{ position: 'right', fill: 'var(--text-secondary)', fontSize: 11,
                   formatter: (v) => `${num((100 * v) / totalMetodos, 0)} %` }} />
             </BarChart>
           </ResponsiveContainer>
-          <p className="sig-kpi__sub">Efectivo USD y Zelle generan IGTF ({formatUSD(act.igtf)} en el período).</p>
+          <p className="sig-kpi__sub">Efectivo USD y Zelle generan IGTF ({formatMonto(act.igtf)} en el período).</p>
         </div>
       </div>
 
@@ -418,7 +426,7 @@ export default function PanelGerencial() {
                 return (
                   <div key={`${d}-${h}`} className="sig-mapa__celda"
                     style={{ background: tonoSecuencial(n), color: oscuro ? '#fff' : 'var(--text-secondary)' }}
-                    title={`${DIAS[d]} ${h}:00 – ${n} factura(s) · ${formatUSD(c?.ventas || 0)}`}>
+                    title={`${DIAS[d]} ${h}:00 – ${n} factura(s) · ${formatMonto(c?.ventas || 0)}`}>
                     {n || ''}
                   </div>
                 );
@@ -448,7 +456,7 @@ export default function PanelGerencial() {
                   <tr key={p.producto_id}>
                     <td><span className="sig-clase" style={{ background: COLOR_CLASE[p.clase] }}>{p.clase}</span></td>
                     <td>{p.nombre}<div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{p.sku} · {num(p.margen_pct, 1)} % margen</div></td>
-                    <td>{formatUSD(p.margen)}</td>
+                    <td>{formatMonto(p.margen)}</td>
                     <td>{num(p.acumulado_pct, 1)} %</td>
                     <td>{p.stock}</td>
                     <td style={{ color: p.dias_cobertura !== null && p.dias_cobertura < 10 ? 'var(--danger)' : undefined }}>
@@ -480,10 +488,10 @@ export default function PanelGerencial() {
               <tbody>
                 {pagRfm.visibles.map((c) => (
                   <tr key={c.cliente_id}>
-                    <td>{c.nombre}{Number(c.saldo_pendiente) > 0 && <div className="text-xs" style={{ color: 'var(--warning)' }}>Debe {formatUSD(c.saldo_pendiente)}</div>}</td>
+                    <td>{c.nombre}{Number(c.saldo_pendiente) > 0 && <div className="text-xs" style={{ color: 'var(--warning)' }}>Debe {formatMonto(c.saldo_pendiente)}</div>}</td>
                     <td>hace {c.recencia_dias} d</td>
                     <td>{c.frecuencia}</td>
-                    <td>{formatUSD(c.monto)}</td>
+                    <td>{formatMonto(c.monto)}</td>
                     <td><code>{c.r}-{c.f}-{c.m}</code></td>
                     <td>{c.segmento}</td>
                   </tr>

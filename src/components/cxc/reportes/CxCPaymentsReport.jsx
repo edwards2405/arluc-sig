@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { formatUSD, formatBs, formatFecha } from '../../../utils/formatters';
+import { formatDolares, formatBs, formatFecha } from '../../../utils/formatters';
 import { HiOutlineBanknotes, HiOutlineFunnel, HiOutlineCalendar } from 'react-icons/hi2';
 import Pagination from '../../common/Pagination';
 
@@ -73,8 +73,8 @@ export default function CxCPaymentsReport({ abonosHistorico = [], tasaValor = 0 
           <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
             <div style={{ textAlign: 'right' }}>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block' }}>Total Recaudado</span>
-              <strong style={{ fontSize: '1.25rem', color: '#10B981' }}>{formatUSD(totalUSD)}</strong>
-              {totalBs > 0 && <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block' }}>{formatBs(totalBs)}</span>}
+              <strong style={{ fontSize: '1.25rem', color: '#10B981' }}>{formatBs(totalBs)}</strong>
+              {totalUSD > 0 && <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block' }}>Ref. {formatDolares(totalUSD)}</span>}
             </div>
           </div>
         </div>
@@ -99,8 +99,8 @@ export default function CxCPaymentsReport({ abonosHistorico = [], tasaValor = 0 
                 <th>Factura Asoc.</th>
                 <th>Método de Pago</th>
                 <th>Notas / Referencia</th>
-                <th style={{ textAlign: 'right' }}>Monto (USD)</th>
                 <th style={{ textAlign: 'right' }}>Monto (Bs)</th>
+                <th style={{ textAlign: 'right' }}>Ref. (USD)</th>
               </tr>
             </thead>
             <tbody>
@@ -135,11 +135,11 @@ export default function CxCPaymentsReport({ abonosHistorico = [], tasaValor = 0 
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <strong style={{ color: '#10B981', fontSize: '0.95rem' }}>
-                        {formatUSD(a.monto_usd)}
+                        {a.monto_bs > 0 ? formatBs(a.monto_bs) : '—'}
                       </strong>
                     </td>
                     <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>
-                      {a.monto_bs > 0 ? formatBs(a.monto_bs) : '—'}
+                      {formatDolares(a.monto_usd)}
                     </td>
                   </tr>
                 ))
@@ -149,8 +149,8 @@ export default function CxCPaymentsReport({ abonosHistorico = [], tasaValor = 0 
               <tfoot>
                 <tr style={{ background: 'var(--bg-elevated)', borderTop: '2px solid var(--border)' }}>
                   <td colSpan="5"><strong>TOTAL RECAUDADO EN ESTE PERÍODO</strong></td>
-                  <td style={{ textAlign: 'right' }}><strong style={{ color: '#10B981', fontSize: '1.05rem' }}>{formatUSD(totalUSD)}</strong></td>
-                  <td style={{ textAlign: 'right' }}><strong>{formatBs(totalBs)}</strong></td>
+                  <td style={{ textAlign: 'right' }}><strong style={{ color: '#10B981', fontSize: '1.05rem' }}>{formatBs(totalBs)}</strong></td>
+                  <td style={{ textAlign: 'right' }}><strong>{formatDolares(totalUSD)}</strong></td>
                 </tr>
               </tfoot>
             )}

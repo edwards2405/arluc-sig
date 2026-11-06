@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { XLSX, imprimirCon } from '../utils/xlsxFormateado';
 import { supabase } from '../lib/supabase';
-import { formatUSD, formatBs, formatFecha } from '../utils/formatters';
+import { formatMonto, formatBs, formatDolares, formatFecha } from '../utils/formatters';
 import { getEmpresaConfig } from '../utils/constants';
 import toast from 'react-hot-toast';
 import Pagination from '../components/common/Pagination';
@@ -325,6 +325,9 @@ export default function Reportes() {
   // Total recaudado físicamente y en bancos en tienda (excluyendo lo que Cashea aún no liquida)
   const totalRecaudadoEnTiendaUSD = totalEfectivoUSD + totalBancoUSD_equiv + totalZelleUSD + cierreCaja.efectivoBs.total_usd + cierreCaja.otros.total_usd;
 
+  // Tasa media de un canal: su desglose en USD se muestra en Bs y cuadra con su total guardado
+  const tasaCanal = (c) => (c.total_usd > 0 && c.total_bs > 0 ? c.total_bs / c.total_usd : undefined);
+
   // Payment method breakdown (para la pestaña de gráficos tradicionales)
   const metodosTotales = {};
   facturasEmitidas.forEach(f => {
@@ -340,6 +343,7 @@ export default function Reportes() {
     .map(([m, s]) => ({ metodo: m, ...s }))
     .sort((a, b) => b.total_usd - a.total_usd);
   const maxMetodoUSD = metodosOrdenados[0]?.total_usd || 1;
+  const montoMetodo = (m) => (m.total_bs > 0 ? formatBs(m.total_bs) : formatMonto(m.total_usd));
 
   // Top products sold
   const rankingProductos = {};
@@ -420,7 +424,7 @@ export default function Reportes() {
       'Vendedor': f.usuarios?.nombre_completo || 'N/A',
       'Total USD': parseFloat(f.total_usd || 0),
       'Total Bs': parseFloat(f.total_bs || 0),
-      'Métodos de Pago': (f.metodos_pago || []).map(m => `${m.metodo}: $${m.monto_usd}`).join(' | '),
+      'Métodos de Pago': (f.metodos_pago || []).map(m => `${m.metodo}: ${Number(m.monto_bs) > 0 ? formatBs(m.monto_bs) : formatMonto(m.monto_usd, f.total_usd > 0 && f.total_bs > 0 ? f.total_bs / f.total_usd : undefined)}`).join(' | '),
       'Estado': f.estado || 'emitida',
     }));
 
@@ -451,18 +455,19 @@ export default function Reportes() {
     ];
     XLSX.utils.book_append_sheet(wb, wsVentas, 'Ventas Detalladas');
 
-    // Hoja 2: Cierre y Arqueo de Caja
+    // Hoja 2: Cierre y Arqueo de Caja. Va como texto: el adaptador multiplicaría por la
+    // tasa cualquier número en una columna llamada "Monto", y estos ya están en Bs.
     const filasArqueo = [
-      { 'Categoría': 'EFECTIVO EN GAVETA (FÍSICO)', 'Canal / Método': 'Efectivo USD', 'Monto Moneda Origen': parseFloat(totalEfectivoUSD.toFixed(2)), 'Moneda': 'USD ($)', 'Equivalente Ref': parseFloat((cierreCaja.efectivoUSD.total_bs).toFixed(2)), 'Moneda Ref': 'Bs', 'Operaciones': cierreCaja.efectivoUSD.transacciones },
-      { 'Categoría': 'EFECTIVO EN GAVETA (FÍSICO)', 'Canal / Método': 'Efectivo Bolívares', 'Monto Moneda Origen': parseFloat(totalEfectivoBs.toFixed(2)), 'Moneda': 'Bs', 'Equivalente Ref': parseFloat((cierreCaja.efectivoBs.total_usd).toFixed(2)), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.efectivoBs.transacciones },
-      { 'Categoría': 'BANCO NACIONAL (BOLÍVARES)', 'Canal / Método': 'Punto de Venta (Lote Débito/Crédito)', 'Monto Moneda Origen': parseFloat((cierreCaja.puntoVenta.total_bs).toFixed(2)), 'Moneda': 'Bs', 'Equivalente Ref': parseFloat((cierreCaja.puntoVenta.total_usd).toFixed(2)), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.puntoVenta.transacciones },
-      { 'Categoría': 'BANCO NACIONAL (BOLÍVARES)', 'Canal / Método': 'Pago Móvil (Transferencia Inmediata)', 'Monto Moneda Origen': parseFloat((cierreCaja.pagoMovil.total_bs).toFixed(2)), 'Moneda': 'Bs', 'Equivalente Ref': parseFloat((cierreCaja.pagoMovil.total_usd).toFixed(2)), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.pagoMovil.transacciones },
-      { 'Categoría': 'BANCO NACIONAL (BOLÍVARES)', 'Canal / Método': 'Transferencia Bancaria Nacional', 'Monto Moneda Origen': parseFloat((cierreCaja.transferencia.total_bs).toFixed(2)), 'Moneda': 'Bs', 'Equivalente Ref': parseFloat((cierreCaja.transferencia.total_usd).toFixed(2)), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.transferencia.transacciones },
-      { 'Categoría': 'BANCO NACIONAL (BOLÍVARES)', 'Canal / Método': 'TOTAL EN BANCO (BOLÍVARES)', 'Monto Moneda Origen': parseFloat(totalBancoBs.toFixed(2)), 'Moneda': 'Bs', 'Equivalente Ref': parseFloat(totalBancoUSD_equiv.toFixed(2)), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.puntoVenta.transacciones + cierreCaja.pagoMovil.transacciones + cierreCaja.transferencia.transacciones },
-      { 'Categoría': 'BANCO INTERNACIONAL (DIGITAL)', 'Canal / Método': 'Zelle (Dólares Digitales)', 'Monto Moneda Origen': parseFloat(totalZelleUSD.toFixed(2)), 'Moneda': 'USD ($)', 'Equivalente Ref': parseFloat((cierreCaja.zelle.total_bs).toFixed(2)), 'Moneda Ref': 'Bs', 'Operaciones': cierreCaja.zelle.transacciones },
-      { 'Categoría': 'CRÉDITO CASHEA (A COBRAR)', 'Canal / Método': 'Monto Financiado a Clientes', 'Monto Moneda Origen': parseFloat(totalCasheaFinanciadoUSD.toFixed(2)), 'Moneda': 'USD ($)', 'Equivalente Ref': parseFloat(totalCasheaFinanciadoBs.toFixed(2)), 'Moneda Ref': 'Bs', 'Operaciones': cierreCaja.casheaFinanciado.transacciones },
-      { 'Categoría': 'TOTALES DEL CIERRE', 'Canal / Método': 'TOTAL RECAUDADO EN TIENDA', 'Monto Moneda Origen': parseFloat(totalRecaudadoEnTiendaUSD.toFixed(2)), 'Moneda': 'USD ($)', 'Equivalente Ref': parseFloat((totalBs - totalCasheaFinanciadoBs).toFixed(2)), 'Moneda Ref': 'Bs', 'Operaciones': facturasEmitidas.length },
-      { 'Categoría': 'TOTALES DEL CIERRE', 'Canal / Método': 'TOTAL GENERAL FACTURADO', 'Monto Moneda Origen': parseFloat(totalUSD.toFixed(2)), 'Moneda': 'USD ($)', 'Equivalente Ref': parseFloat(totalBs.toFixed(2)), 'Moneda Ref': 'Bs', 'Operaciones': facturasEmitidas.length },
+      { 'Categoría': 'EFECTIVO EN GAVETA (FÍSICO)', 'Canal / Método': 'Efectivo USD', 'Monto Moneda Origen': formatBs(cierreCaja.efectivoUSD.total_bs), 'Moneda': 'Bs', 'Equivalente Ref': formatDolares(totalEfectivoUSD), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.efectivoUSD.transacciones },
+      { 'Categoría': 'EFECTIVO EN GAVETA (FÍSICO)', 'Canal / Método': 'Efectivo Bolívares', 'Monto Moneda Origen': formatBs(totalEfectivoBs), 'Moneda': 'Bs', 'Equivalente Ref': formatDolares(cierreCaja.efectivoBs.total_usd), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.efectivoBs.transacciones },
+      { 'Categoría': 'BANCO NACIONAL (BOLÍVARES)', 'Canal / Método': 'Punto de Venta (Lote Débito/Crédito)', 'Monto Moneda Origen': formatBs(cierreCaja.puntoVenta.total_bs), 'Moneda': 'Bs', 'Equivalente Ref': formatDolares(cierreCaja.puntoVenta.total_usd), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.puntoVenta.transacciones },
+      { 'Categoría': 'BANCO NACIONAL (BOLÍVARES)', 'Canal / Método': 'Pago Móvil (Transferencia Inmediata)', 'Monto Moneda Origen': formatBs(cierreCaja.pagoMovil.total_bs), 'Moneda': 'Bs', 'Equivalente Ref': formatDolares(cierreCaja.pagoMovil.total_usd), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.pagoMovil.transacciones },
+      { 'Categoría': 'BANCO NACIONAL (BOLÍVARES)', 'Canal / Método': 'Transferencia Bancaria Nacional', 'Monto Moneda Origen': formatBs(cierreCaja.transferencia.total_bs), 'Moneda': 'Bs', 'Equivalente Ref': formatDolares(cierreCaja.transferencia.total_usd), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.transferencia.transacciones },
+      { 'Categoría': 'BANCO NACIONAL (BOLÍVARES)', 'Canal / Método': 'TOTAL EN BANCO (BOLÍVARES)', 'Monto Moneda Origen': formatBs(totalBancoBs), 'Moneda': 'Bs', 'Equivalente Ref': formatDolares(totalBancoUSD_equiv), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.puntoVenta.transacciones + cierreCaja.pagoMovil.transacciones + cierreCaja.transferencia.transacciones },
+      { 'Categoría': 'BANCO INTERNACIONAL (DIGITAL)', 'Canal / Método': 'Zelle (Dólares Digitales)', 'Monto Moneda Origen': formatBs(cierreCaja.zelle.total_bs), 'Moneda': 'Bs', 'Equivalente Ref': formatDolares(totalZelleUSD), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.zelle.transacciones },
+      { 'Categoría': 'CRÉDITO CASHEA (A COBRAR)', 'Canal / Método': 'Monto Financiado a Clientes', 'Monto Moneda Origen': formatBs(totalCasheaFinanciadoBs), 'Moneda': 'Bs', 'Equivalente Ref': formatDolares(totalCasheaFinanciadoUSD), 'Moneda Ref': 'USD ($)', 'Operaciones': cierreCaja.casheaFinanciado.transacciones },
+      { 'Categoría': 'TOTALES DEL CIERRE', 'Canal / Método': 'TOTAL RECAUDADO EN TIENDA', 'Monto Moneda Origen': formatBs(totalBs - totalCasheaFinanciadoBs), 'Moneda': 'Bs', 'Equivalente Ref': formatDolares(totalRecaudadoEnTiendaUSD), 'Moneda Ref': 'USD ($)', 'Operaciones': facturasEmitidas.length },
+      { 'Categoría': 'TOTALES DEL CIERRE', 'Canal / Método': 'TOTAL GENERAL FACTURADO', 'Monto Moneda Origen': formatBs(totalBs), 'Moneda': 'Bs', 'Equivalente Ref': formatDolares(totalUSD), 'Moneda Ref': 'USD ($)', 'Operaciones': facturasEmitidas.length },
     ];
     const wsArqueo = XLSX.utils.json_to_sheet(filasArqueo);
     wsArqueo['!cols'] = [
@@ -479,15 +484,14 @@ export default function Reportes() {
     // Hoja 3: Resumen y KPIs
     const resumenKPIs = [
       { 'Métrica': 'Período', 'Valor': `${fechaDesde} al ${fechaHasta}` },
-      { 'Métrica': 'Total Ventas USD', 'Valor': parseFloat(totalUSD.toFixed(2)) },
       { 'Métrica': 'Total Ventas Bs', 'Valor': parseFloat(totalBs.toFixed(2)) },
-      { 'Métrica': 'Total Efectivo Físico USD', 'Valor': parseFloat(totalEfectivoUSD.toFixed(2)) },
+      { 'Métrica': 'Total Efectivo en Dólares (equiv. Bs)', 'Valor': parseFloat(cierreCaja.efectivoUSD.total_bs.toFixed(2)) },
       { 'Métrica': 'Total Efectivo Físico Bs', 'Valor': parseFloat(totalEfectivoBs.toFixed(2)) },
       { 'Métrica': 'Total en Bancos Bs', 'Valor': parseFloat(totalBancoBs.toFixed(2)) },
-      { 'Métrica': 'Total en Zelle USD', 'Valor': parseFloat(totalZelleUSD.toFixed(2)) },
-      { 'Métrica': 'Total Financiado por Cashea USD', 'Valor': parseFloat(totalCasheaFinanciadoUSD.toFixed(2)) },
+      { 'Métrica': 'Total en Zelle (equiv. Bs)', 'Valor': parseFloat(cierreCaja.zelle.total_bs.toFixed(2)) },
+      { 'Métrica': 'Total Financiado por Cashea Bs', 'Valor': parseFloat(totalCasheaFinanciadoBs.toFixed(2)) },
       { 'Métrica': 'Cantidad de Facturas', 'Valor': facturasEmitidas.length },
-      { 'Métrica': 'Ticket Promedio USD', 'Valor': parseFloat(ticketPromedio.toFixed(2)) },
+      { 'Métrica': 'Ticket Promedio Bs', 'Valor': formatMonto(ticketPromedio) },
     ];
     const wsResumen = XLSX.utils.json_to_sheet(resumenKPIs);
     wsResumen['!cols'] = [{ wch: 32 }, { wch: 25 }];
@@ -613,6 +617,7 @@ export default function Reportes() {
         <div>
           <h1 className="page__title">Reportes y Auditoría</h1>
           <p className="page__subtitle">Métricas de facturación, rendimiento por vendedor e inventario valorizado</p>
+          <p className="page__subtitle" style={{ fontSize: '0.78rem' }}>Montos en Bs a la tasa BCV vigente; los documentos usan la tasa de su fecha.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button
@@ -725,24 +730,24 @@ export default function Reportes() {
         <div className="stat-card">
           <div className="stat-card__icon stat-card__icon--primary"><HiOutlineBanknotes /></div>
           <div className="stat-card__content">
-            <span className="stat-card__label">Facturación USD</span>
-            <span className="stat-card__value">{formatUSD(totalUSD)}</span>
-            <span className="stat-card__sub">{facturasEmitidas.length} facturas emitidas</span>
+            <span className="stat-card__label">Facturación Bs</span>
+            <span className="stat-card__value">{formatBs(totalBs)}</span>
+            <span className="stat-card__sub">{facturasEmitidas.length} facturas, al cambio de cada operación</span>
           </div>
         </div>
         <div className="stat-card">
           <div className="stat-card__icon stat-card__icon--success"><HiOutlineCreditCard /></div>
           <div className="stat-card__content">
-            <span className="stat-card__label">Facturación Bs</span>
-            <span className="stat-card__value">{formatBs(totalBs)}</span>
-            <span className="stat-card__sub">Al cambio de cada operación</span>
+            <span className="stat-card__label">Facturación a tasa vigente</span>
+            <span className="stat-card__value">{formatMonto(totalUSD)}</span>
+            <span className="stat-card__sub">Ref. {formatDolares(totalUSD)}</span>
           </div>
         </div>
         <div className="stat-card">
           <div className="stat-card__icon stat-card__icon--info"><HiOutlineDocumentChartBar /></div>
           <div className="stat-card__content">
             <span className="stat-card__label">Ticket Promedio</span>
-            <span className="stat-card__value">{formatUSD(ticketPromedio)}</span>
+            <span className="stat-card__value">{formatMonto(ticketPromedio)}</span>
             <span className="stat-card__sub">Promedio por venta</span>
           </div>
         </div>
@@ -757,7 +762,7 @@ export default function Reportes() {
             </span>
             <span className="stat-card__sub">
               {facturasAnuladas.length > 0
-                ? `${formatUSD(facturasAnuladas.reduce((s, f) => s + parseFloat(f.total_usd || 0), 0))} anulados`
+                ? `${formatBs(facturasAnuladas.reduce((s, f) => s + parseFloat(f.total_bs || 0), 0))} anulados`
                 : 'Sin anulaciones'}
             </span>
           </div>
@@ -790,7 +795,7 @@ export default function Reportes() {
                     <th style={{ width: '40px' }}>#</th>
                     <th>Producto</th>
                     <th style={{ textAlign: 'center' }}>Unidades</th>
-                    <th style={{ textAlign: 'right' }}>Total (USD)</th>
+                    <th style={{ textAlign: 'right' }}>Total (Bs)</th>
                     <th style={{ textAlign: 'right' }}>% Aporte</th>
                   </tr>
                 </thead>
@@ -806,7 +811,7 @@ export default function Reportes() {
                         <td style={{ textAlign: 'center' }}>
                           <span className="badge badge--primary">{prod.cantidad} uds</span>
                         </td>
-                        <td style={{ textAlign: 'right' }}><strong>{formatUSD(prod.total_usd)}</strong></td>
+                        <td style={{ textAlign: 'right' }}><strong>{formatMonto(prod.total_usd)}</strong></td>
                         <td style={{ textAlign: 'right' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'flex-end' }}>
                             <div style={{ width: '60px', height: '6px', background: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}>
@@ -844,7 +849,7 @@ export default function Reportes() {
                     <th>#</th>
                     <th>Producto</th>
                     <th style={{ textAlign: 'center' }}>Unidades Vendidas</th>
-                    <th style={{ textAlign: 'right' }}>Total (USD)</th>
+                    <th style={{ textAlign: 'right' }}>Total (Bs)</th>
                     <th style={{ textAlign: 'center' }}>Estado</th>
                   </tr>
                 </thead>
@@ -861,7 +866,7 @@ export default function Reportes() {
                           {prod.cantidad} uds
                         </span>
                       </td>
-                      <td style={{ textAlign: 'right' }}>{formatUSD(prod.total_usd)}</td>
+                      <td style={{ textAlign: 'right' }}>{formatMonto(prod.total_usd)}</td>
                       <td style={{ textAlign: 'center' }}>
                         <span className={`badge ${prod.cantidad === 0 ? 'badge--danger' : 'badge--warning'}`}>
                           {prod.cantidad === 0 ? 'Sin ventas' : 'Baja rotación'}
@@ -927,13 +932,16 @@ export default function Reportes() {
               </div>
 
               <div style={{ padding: '0.75rem', background: '#141414', borderRadius: '8px', marginBottom: '0.6rem', border: '1px solid #262626' }}>
-                <div style={{ fontSize: '0.75rem', color: '#A3A3A3', textTransform: 'uppercase' }}>Dólares en Billetes (USD)</div>
+                <div style={{ fontSize: '0.75rem', color: '#A3A3A3', textTransform: 'uppercase' }}>Dólares en Billetes (equiv. Bs)</div>
                 <div style={{ fontSize: '1.6rem', fontWeight: '900', color: '#22C55E', marginTop: '2px' }}>
-                  {formatUSD(totalEfectivoUSD)}
+                  {formatBs(cierreCaja.efectivoUSD.total_bs)}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#888' }}>
+                  Ref. {formatDolares(totalEfectivoUSD)}
                 </div>
                 <div style={{ fontSize: '0.75rem', color: '#777', marginTop: '4px', borderTop: '1px solid #222', paddingTop: '4px' }}>
-                  • Ventas directas: {formatUSD(cierreCaja.efectivoUSD.directas_usd)}<br />
-                  • Iniciales Cashea en $: {formatUSD(cierreCaja.efectivoUSD.iniciales_usd)}
+                  • Ventas directas: {formatMonto(cierreCaja.efectivoUSD.directas_usd, tasaCanal(cierreCaja.efectivoUSD))}<br />
+                  • Iniciales Cashea en divisas: {formatMonto(cierreCaja.efectivoUSD.iniciales_usd, tasaCanal(cierreCaja.efectivoUSD))}
                 </div>
               </div>
 
@@ -969,7 +977,7 @@ export default function Reportes() {
                   {formatBs(totalBancoBs)}
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#888' }}>
-                  Contravalor Ref: {formatUSD(totalBancoUSD_equiv)}
+                  Contravalor Ref: {formatDolares(totalBancoUSD_equiv)}
                 </div>
               </div>
 
@@ -1014,18 +1022,18 @@ export default function Reportes() {
               </div>
 
               <div style={{ padding: '0.75rem', background: '#141414', borderRadius: '8px', marginBottom: '0.6rem', border: '1px solid #262626' }}>
-                <div style={{ fontSize: '0.75rem', color: '#A3A3A3', textTransform: 'uppercase' }}>Total Recibido en Zelle (USD)</div>
+                <div style={{ fontSize: '0.75rem', color: '#A3A3A3', textTransform: 'uppercase' }}>Total Recibido en Zelle (equiv. Bs)</div>
                 <div style={{ fontSize: '1.6rem', fontWeight: '900', color: '#60A5FA', marginTop: '2px' }}>
-                  {formatUSD(totalZelleUSD)}
+                  {formatBs(cierreCaja.zelle.total_bs)}
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#888' }}>
-                  {cierreCaja.zelle.transacciones} operaciones | Ref. {formatBs(cierreCaja.zelle.total_bs)}
+                  {cierreCaja.zelle.transacciones} operaciones | Ref. {formatDolares(totalZelleUSD)}
                 </div>
               </div>
 
               <div style={{ fontSize: '0.75rem', color: '#777', padding: '0.5rem', background: '#141414', borderRadius: '6px', border: '1px solid #222' }}>
-                • Ventas directas Zelle: {formatUSD(cierreCaja.zelle.directas_usd)}<br />
-                • Iniciales Cashea en Zelle: {formatUSD(cierreCaja.zelle.iniciales_usd)}
+                • Ventas directas Zelle: {formatMonto(cierreCaja.zelle.directas_usd, tasaCanal(cierreCaja.zelle))}<br />
+                • Iniciales Cashea en Zelle: {formatMonto(cierreCaja.zelle.iniciales_usd, tasaCanal(cierreCaja.zelle))}
               </div>
             </div>
 
@@ -1046,10 +1054,10 @@ export default function Reportes() {
               <div style={{ padding: '0.75rem', background: '#141414', borderRadius: '8px', marginBottom: '0.6rem', border: '1px solid #262626' }}>
                 <div style={{ fontSize: '0.75rem', color: '#EC4899', textTransform: 'uppercase', fontWeight: 'bold' }}>Total Financiado a Clientes</div>
                 <div style={{ fontSize: '1.6rem', fontWeight: '900', color: '#F472B6', marginTop: '2px' }}>
-                  {formatUSD(totalCasheaFinanciadoUSD)}
+                  {formatBs(totalCasheaFinanciadoBs)}
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#888' }}>
-                  Ref. {formatBs(totalCasheaFinanciadoBs)} | {cierreCaja.casheaFinanciado.transacciones} órdenes Cashea
+                  Ref. {formatDolares(totalCasheaFinanciadoUSD)} | {cierreCaja.casheaFinanciado.transacciones} órdenes Cashea
                 </div>
               </div>
 
@@ -1071,38 +1079,38 @@ export default function Reportes() {
                   <tr>
                     <th>Canal / Destino de los Fondos</th>
                     <th style={{ textAlign: 'center' }}>Operaciones</th>
-                    <th style={{ textAlign: 'right' }}>Monto en Moneda de Origen</th>
-                    <th style={{ textAlign: 'right' }}>Contravalor Referencial</th>
+                    <th style={{ textAlign: 'right' }}>Monto (Bs)</th>
+                    <th style={{ textAlign: 'right' }}>Ref. USD</th>
                     <th style={{ textAlign: 'right' }}>Estado / Ubicación</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr>
-                    <td><strong>💵 Efectivo Dólares (USD)</strong></td>
+                    <td><strong>💵 Efectivo en Dólares</strong></td>
                     <td style={{ textAlign: 'center' }}>{cierreCaja.efectivoUSD.transacciones}</td>
-                    <td style={{ textAlign: 'right' }}><strong style={{ color: '#22C55E' }}>{formatUSD(totalEfectivoUSD)}</strong></td>
-                    <td style={{ textAlign: 'right', color: '#888' }}>{formatBs(cierreCaja.efectivoUSD.total_bs)}</td>
+                    <td style={{ textAlign: 'right' }}><strong style={{ color: '#22C55E' }}>{formatBs(cierreCaja.efectivoUSD.total_bs)}</strong></td>
+                    <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(totalEfectivoUSD)}</td>
                     <td style={{ textAlign: 'right' }}><span className="badge badge--success">Físico en Gaveta</span></td>
                   </tr>
                   <tr>
                     <td><strong>💵 Efectivo Bolívares (Bs)</strong></td>
                     <td style={{ textAlign: 'center' }}>{cierreCaja.efectivoBs.transacciones}</td>
                     <td style={{ textAlign: 'right' }}><strong style={{ color: '#F59E0B' }}>{formatBs(totalEfectivoBs)}</strong></td>
-                    <td style={{ textAlign: 'right', color: '#888' }}>{formatUSD(cierreCaja.efectivoBs.total_usd)}</td>
+                    <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(cierreCaja.efectivoBs.total_usd)}</td>
                     <td style={{ textAlign: 'right' }}><span className="badge badge--success">Físico en Gaveta</span></td>
                   </tr>
                   <tr>
                     <td><strong>💳 Punto de Venta (Tarjetas Débito/Crédito)</strong></td>
                     <td style={{ textAlign: 'center' }}>{cierreCaja.puntoVenta.transacciones}</td>
                     <td style={{ textAlign: 'right' }}><strong style={{ color: '#A78BFA' }}>{formatBs(cierreCaja.puntoVenta.total_bs)}</strong></td>
-                    <td style={{ textAlign: 'right', color: '#888' }}>{formatUSD(cierreCaja.puntoVenta.total_usd)}</td>
+                    <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(cierreCaja.puntoVenta.total_usd)}</td>
                     <td style={{ textAlign: 'right' }}><span className="badge badge--primary">Banco en Bolívares</span></td>
                   </tr>
                   <tr>
                     <td><strong>📲 Pago Móvil Interbancario</strong></td>
                     <td style={{ textAlign: 'center' }}>{cierreCaja.pagoMovil.transacciones}</td>
                     <td style={{ textAlign: 'right' }}><strong style={{ color: '#A78BFA' }}>{formatBs(cierreCaja.pagoMovil.total_bs)}</strong></td>
-                    <td style={{ textAlign: 'right', color: '#888' }}>{formatUSD(cierreCaja.pagoMovil.total_usd)}</td>
+                    <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(cierreCaja.pagoMovil.total_usd)}</td>
                     <td style={{ textAlign: 'right' }}><span className="badge badge--primary">Banco en Bolívares</span></td>
                   </tr>
                   {cierreCaja.transferencia.total_bs > 0 && (
@@ -1110,7 +1118,7 @@ export default function Reportes() {
                       <td><strong>🏛️ Transferencias Bancarias</strong></td>
                       <td style={{ textAlign: 'center' }}>{cierreCaja.transferencia.transacciones}</td>
                       <td style={{ textAlign: 'right' }}><strong style={{ color: '#A78BFA' }}>{formatBs(cierreCaja.transferencia.total_bs)}</strong></td>
-                      <td style={{ textAlign: 'right', color: '#888' }}>{formatUSD(cierreCaja.transferencia.total_usd)}</td>
+                      <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(cierreCaja.transferencia.total_usd)}</td>
                       <td style={{ textAlign: 'right' }}><span className="badge badge--primary">Banco en Bolívares</span></td>
                     </tr>
                   )}
@@ -1118,8 +1126,8 @@ export default function Reportes() {
                     <tr>
                       <td><strong>🌐 Zelle</strong></td>
                       <td style={{ textAlign: 'center' }}>{cierreCaja.zelle.transacciones}</td>
-                      <td style={{ textAlign: 'right' }}><strong style={{ color: '#60A5FA' }}>{formatUSD(totalZelleUSD)}</strong></td>
-                      <td style={{ textAlign: 'right', color: '#888' }}>{formatBs(cierreCaja.zelle.total_bs)}</td>
+                      <td style={{ textAlign: 'right' }}><strong style={{ color: '#60A5FA' }}>{formatBs(cierreCaja.zelle.total_bs)}</strong></td>
+                      <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(totalZelleUSD)}</td>
                       <td style={{ textAlign: 'right' }}><span className="badge badge--info">Banco Internacional</span></td>
                     </tr>
                   )}
@@ -1127,8 +1135,8 @@ export default function Reportes() {
                     <tr style={{ background: 'rgba(236,72,153,0.05)' }}>
                       <td><strong>📱 Monto Financiado por Cashea (Crédito a Clientes)</strong></td>
                       <td style={{ textAlign: 'center' }}>{cierreCaja.casheaFinanciado.transacciones}</td>
-                      <td style={{ textAlign: 'right' }}><strong style={{ color: '#EC4899' }}>{formatUSD(totalCasheaFinanciadoUSD)}</strong></td>
-                      <td style={{ textAlign: 'right', color: '#888' }}>{formatBs(totalCasheaFinanciadoBs)}</td>
+                      <td style={{ textAlign: 'right' }}><strong style={{ color: '#EC4899' }}>{formatBs(totalCasheaFinanciadoBs)}</strong></td>
+                      <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(totalCasheaFinanciadoUSD)}</td>
                       <td style={{ textAlign: 'right' }}><span className="badge" style={{ background: '#EC4899', color: '#fff' }}>Por Liquidar Cashea</span></td>
                     </tr>
                   )}
@@ -1137,15 +1145,15 @@ export default function Reportes() {
                   <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-elevated)' }}>
                     <td><strong>TOTAL COBRADO EN TIENDA (FÍSICO + BANCOS)</strong></td>
                     <td style={{ textAlign: 'center' }}><strong>{facturasEmitidas.length}</strong></td>
-                    <td style={{ textAlign: 'right' }}><strong style={{ color: 'var(--success)', fontSize: '1.05rem' }}>{formatUSD(totalRecaudadoEnTiendaUSD)}</strong></td>
-                    <td style={{ textAlign: 'right' }}><strong>{formatBs(totalBs - totalCasheaFinanciadoBs)}</strong></td>
+                    <td style={{ textAlign: 'right' }}><strong style={{ color: 'var(--success)', fontSize: '1.05rem' }}>{formatBs(totalBs - totalCasheaFinanciadoBs)}</strong></td>
+                    <td style={{ textAlign: 'right' }}><strong>{formatDolares(totalRecaudadoEnTiendaUSD)}</strong></td>
                     <td style={{ textAlign: 'right' }}><strong>Recaudado Hoy</strong></td>
                   </tr>
                   <tr style={{ background: 'var(--bg-card)', borderTop: '1px solid var(--border)' }}>
                     <td><strong style={{ color: 'var(--primary)' }}>TOTAL FACTURACIÓN GENERAL (INCLUYENDO CRÉDITO CASHEA)</strong></td>
                     <td style={{ textAlign: 'center' }}><strong>{facturasEmitidas.length} facturas</strong></td>
-                    <td style={{ textAlign: 'right' }}><strong style={{ color: 'var(--primary)', fontSize: '1.1rem' }}>{formatUSD(totalUSD)}</strong></td>
                     <td style={{ textAlign: 'right' }}><strong style={{ color: 'var(--primary)', fontSize: '1.1rem' }}>{formatBs(totalBs)}</strong></td>
+                    <td style={{ textAlign: 'right' }}><strong style={{ color: 'var(--primary)', fontSize: '1.1rem' }}>{formatDolares(totalUSD)}</strong></td>
                     <td style={{ textAlign: 'right' }}><span className="badge badge--primary">Total General</span></td>
                   </tr>
                 </tfoot>
@@ -1162,7 +1170,7 @@ export default function Reportes() {
                   Desglose Detallado de Iniciales Cobradas de Cashea
                 </h4>
                 <div style={{ fontSize: '0.85rem', color: '#fff', fontWeight: 'bold' }}>
-                  Total Iniciales Cobradas en Tienda: {formatUSD(cierreCaja.inicialesCasheaTotal.total_usd)} | {formatBs(cierreCaja.inicialesCasheaTotal.total_bs)}
+                  Total Iniciales Cobradas en Tienda: {formatBs(cierreCaja.inicialesCasheaTotal.total_bs)} | Ref. {formatDolares(cierreCaja.inicialesCasheaTotal.total_usd)}
                 </div>
               </div>
               <p style={{ fontSize: '0.78rem', color: '#888', margin: '0 0 0.75rem 0' }}>
@@ -1173,10 +1181,10 @@ export default function Reportes() {
                   <div key={met} style={{ background: '#141414', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid #262626' }}>
                     <div style={{ fontSize: '0.75rem', color: '#888', textTransform: 'uppercase' }}>{met}</div>
                     <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: '#fff', marginTop: '2px' }}>
-                      {formatUSD(vals.usd)}
+                      {formatBs(vals.bs)}
                     </div>
                     <div style={{ fontSize: '0.75rem', color: '#A3A3A3' }}>
-                      {formatBs(vals.bs)} ({vals.ops} iniciales)
+                      Ref. {formatDolares(vals.usd)} ({vals.ops} iniciales)
                     </div>
                   </div>
                 ))}
@@ -1219,8 +1227,8 @@ export default function Reportes() {
                   <th>#</th>
                   <th>Vendedor</th>
                   <th style={{ textAlign: 'center' }}>Facturas</th>
-                  <th style={{ textAlign: 'right' }}>Total USD</th>
                   <th style={{ textAlign: 'right' }}>Total Bs</th>
+                  <th style={{ textAlign: 'right' }}>Ref. USD</th>
                   <th style={{ textAlign: 'right' }}>Ticket Promedio</th>
                   <th>Participación</th>
                 </tr>
@@ -1250,9 +1258,9 @@ export default function Reportes() {
                       <td style={{ textAlign: 'center' }}>
                         <span className="badge badge--primary">{v.facturas}</span>
                       </td>
-                      <td style={{ textAlign: 'right' }}><strong>{formatUSD(v.total_usd)}</strong></td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{formatBs(v.total_bs)}</td>
-                      <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{formatUSD(ticket)}</td>
+                      <td style={{ textAlign: 'right' }}><strong>{formatBs(v.total_bs)}</strong></td>
+                      <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{formatDolares(v.total_usd)}</td>
+                      <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{formatMonto(ticket)}</td>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                           <div style={{ flex: 1, height: '8px', background: 'var(--border)', borderRadius: '4px', overflow: 'hidden', minWidth: '80px' }}>
@@ -1300,7 +1308,7 @@ export default function Reportes() {
                           <span className="badge badge--primary" style={{ fontSize: '0.72rem' }}>{m.transacciones} ops</span>
                         </div>
                         <div style={{ textAlign: 'right' }}>
-                          <span style={{ fontWeight: '700', fontSize: '0.95rem' }}>{formatUSD(m.total_usd)}</span>
+                          <span style={{ fontWeight: '700', fontSize: '0.95rem' }}>{montoMetodo(m)}</span>
                           <span style={{ fontSize: '0.8rem', color: '#666', marginLeft: '0.5rem' }}>({pct.toFixed(1)}%)</span>
                         </div>
                       </div>
@@ -1311,11 +1319,9 @@ export default function Reportes() {
                           boxShadow: `0 0 8px ${color}55`,
                         }} />
                       </div>
-                      {m.total_bs > 0 && (
-                        <div style={{ fontSize: '0.77rem', color: '#555', marginTop: '0.25rem' }}>
-                          Equiv. Bs: {formatBs(m.total_bs)}
-                        </div>
-                      )}
+                      <div style={{ fontSize: '0.77rem', color: '#555', marginTop: '0.25rem' }}>
+                        Ref. {formatDolares(m.total_usd)}
+                      </div>
                     </div>
                   );
                 })}
@@ -1334,8 +1340,8 @@ export default function Reportes() {
                   <tr>
                     <th>Método</th>
                     <th style={{ textAlign: 'center' }}>Operaciones</th>
-                    <th style={{ textAlign: 'right' }}>Total Recaudado (USD)</th>
                     <th style={{ textAlign: 'right' }}>Total Recaudado (Bs)</th>
+                    <th style={{ textAlign: 'right' }}>Ref. USD</th>
                     <th style={{ textAlign: 'right' }}>Participación</th>
                   </tr>
                 </thead>
@@ -1352,9 +1358,9 @@ export default function Reportes() {
                           </div>
                         </td>
                         <td style={{ textAlign: 'center' }}>{m.transacciones}</td>
-                        <td style={{ textAlign: 'right' }}><strong>{formatUSD(m.total_usd)}</strong></td>
+                        <td style={{ textAlign: 'right' }}><strong>{montoMetodo(m)}</strong></td>
                         <td style={{ textAlign: 'right', color: '#A3A3A3' }}>
-                          {m.total_bs > 0 ? formatBs(m.total_bs) : '—'}
+                          {formatDolares(m.total_usd)}
                         </td>
                         <td style={{ textAlign: 'right', color: '#A3A3A3' }}>{pct}%</td>
                       </tr>
@@ -1371,8 +1377,8 @@ export default function Reportes() {
                       <td style={{ textAlign: 'center' }}>
                         <strong>{metodosOrdenados.reduce((s, m) => s + m.transacciones, 0)}</strong>
                       </td>
-                      <td style={{ textAlign: 'right' }}><strong style={{ color: '#22C55E' }}>{formatUSD(totalUSD)}</strong></td>
-                      <td style={{ textAlign: 'right' }}><strong style={{ color: '#A3A3A3' }}>{formatBs(totalBs)}</strong></td>
+                      <td style={{ textAlign: 'right' }}><strong style={{ color: '#22C55E' }}>{formatBs(totalBs)}</strong></td>
+                      <td style={{ textAlign: 'right' }}><strong style={{ color: '#A3A3A3' }}>{formatDolares(totalUSD)}</strong></td>
                       <td style={{ textAlign: 'right' }}><strong>100%</strong></td>
                     </tr>
                   </tfoot>
@@ -1392,22 +1398,12 @@ export default function Reportes() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
             <div className="stat-card">
               <div className="stat-card__icon" style={{ background: 'rgba(59,130,246,0.15)', color: '#60A5FA' }}>
-                <HiOutlineCube />
-              </div>
-              <div className="stat-card__content">
-                <span className="stat-card__label">Valor USD</span>
-                <span className="stat-card__value">{formatUSD(valorInventarioUSD)}</span>
-                <span className="stat-card__sub">{inventario.length} productos activos</span>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card__icon" style={{ background: 'rgba(59,130,246,0.15)', color: '#60A5FA' }}>
                 <HiOutlineBanknotes />
               </div>
               <div className="stat-card__content">
                 <span className="stat-card__label">Valor Bs (tasa actual)</span>
                 <span className="stat-card__value">{formatBs(valorInventarioUSD * tasaBsRef)}</span>
-                <span className="stat-card__sub">Tasa: {tasaBsRef.toFixed(2)} Bs/$</span>
+                <span className="stat-card__sub">{inventario.length} productos activos · Tasa: {tasaBsRef.toFixed(2)} Bs/$ · Ref. {formatDolares(valorInventarioUSD)}</span>
               </div>
             </div>
             <div className="stat-card" style={{ borderColor: productosBajoStock.length > 0 ? 'rgba(239,68,68,0.3)' : undefined }}>
@@ -1451,10 +1447,10 @@ export default function Reportes() {
                     <th>SKU</th>
                     <th>Producto</th>
                     <th>Categoría</th>
-                    <th style={{ textAlign: 'right' }}>Precio USD</th>
+                    <th style={{ textAlign: 'right' }}>Precio Bs</th>
                     <th style={{ textAlign: 'center' }}>Stock</th>
-                    <th style={{ textAlign: 'right' }}>Valor USD</th>
                     <th style={{ textAlign: 'right' }}>Valor Bs</th>
+                    <th style={{ textAlign: 'right' }}>Ref. USD</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1467,12 +1463,12 @@ export default function Reportes() {
                         <td><code>{p.sku}</code></td>
                         <td><strong>{p.nombre}</strong></td>
                         <td>{p.categorias?.nombre || 'General'}</td>
-                        <td style={{ textAlign: 'right' }}>{formatUSD(p.precio_usd)}</td>
+                        <td style={{ textAlign: 'right' }}>{formatMonto(p.precio_usd)}</td>
                         <td style={{ textAlign: 'center' }}>
                           <span className={`badge ${bajo ? 'badge--danger' : 'badge--success'}`}>{p.stock}</span>
                         </td>
-                        <td style={{ textAlign: 'right' }}><strong>{formatUSD(vUSD)}</strong></td>
-                        <td style={{ textAlign: 'right', color: '#A3A3A3' }}>{formatBs(vBs)}</td>
+                        <td style={{ textAlign: 'right' }}><strong>{formatBs(vBs)}</strong></td>
+                        <td style={{ textAlign: 'right', color: '#A3A3A3' }}>{formatDolares(vUSD)}</td>
                       </tr>
                     );
                   })}

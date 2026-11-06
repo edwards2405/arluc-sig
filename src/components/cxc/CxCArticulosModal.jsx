@@ -1,5 +1,5 @@
 import React from 'react';
-import { formatUSD, formatBs, formatFecha } from '../../utils/formatters';
+import { formatMonto, formatDolares, formatFecha } from '../../utils/formatters';
 import { HiOutlineXMark, HiOutlineShoppingBag, HiOutlineReceiptPercent } from 'react-icons/hi2';
 
 export default function CxCArticulosModal({ isOpen, cuenta, tasaValor, onClose }) {
@@ -77,7 +77,7 @@ export default function CxCArticulosModal({ isOpen, cuenta, tasaValor, onClose }
           </div>
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Crédito Otorgado:</div>
-            <strong style={{ fontSize: '1.1rem', color: '#6366F1' }}>{formatUSD(cuenta.montoOriginalUSD)}</strong>
+            <strong style={{ fontSize: '1.1rem', color: '#6366F1' }}>{formatMonto(cuenta.montoOriginalUSD)}</strong>
           </div>
         </div>
 
@@ -88,8 +88,8 @@ export default function CxCArticulosModal({ isOpen, cuenta, tasaValor, onClose }
               <tr>
                 <th>Producto / Artículo</th>
                 <th style={{ textAlign: 'center' }}>Cant.</th>
-                <th style={{ textAlign: 'right' }}>P. Unit. (USD)</th>
-                <th style={{ textAlign: 'right' }}>Subtotal (USD)</th>
+                <th style={{ textAlign: 'right' }}>P. Unit. (Bs)</th>
+                <th style={{ textAlign: 'right' }}>Subtotal (Bs)</th>
               </tr>
             </thead>
             <tbody>
@@ -111,11 +111,11 @@ export default function CxCArticulosModal({ isOpen, cuenta, tasaValor, onClose }
                       </span>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      {formatUSD(art.precio_unitario_usd)}
+                      {formatMonto(art.precio_unitario_usd)}
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <strong style={{ color: 'var(--text-primary)' }}>
-                        {formatUSD(art.subtotal_usd || art.cantidad * art.precio_unitario_usd)}
+                        {formatMonto(art.subtotal_usd || art.cantidad * art.precio_unitario_usd)}
                       </strong>
                     </td>
                   </tr>
@@ -130,7 +130,7 @@ export default function CxCArticulosModal({ isOpen, cuenta, tasaValor, onClose }
                   </td>
                   <td style={{ textAlign: 'right' }}>
                     <strong style={{ fontSize: '1rem', color: 'var(--primary)' }}>
-                      {formatUSD(cuenta.totalFacturaUSD || cuenta.montoOriginalUSD)}
+                      {formatMonto(cuenta.totalFacturaUSD || cuenta.montoOriginalUSD)}
                     </strong>
                   </td>
                 </tr>
@@ -163,11 +163,11 @@ export default function CxCArticulosModal({ isOpen, cuenta, tasaValor, onClose }
           <div style={{ textAlign: 'right' }}>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Saldo Restante:</span>
             <div style={{ fontSize: '1.2rem', fontWeight: 900, color: cuenta.saldoTotalUSD === 0 ? '#10B981' : '#6366F1' }}>
-              {formatUSD(cuenta.saldoTotalUSD)}
+              {formatMonto(cuenta.saldoTotalUSD)}
             </div>
             {tasaValor > 0 && cuenta.saldoTotalUSD > 0 && (
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                {formatBs(cuenta.saldoTotalUSD * tasaValor)}
+                Ref. {formatDolares(cuenta.saldoTotalUSD)}
               </span>
             )}
           </div>

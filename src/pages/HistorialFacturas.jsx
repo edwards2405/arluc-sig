@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { formatUSD, formatBs, formatFecha, formatTasa } from '../utils/formatters';
+import { formatMonto, formatBs, formatDolares, formatFecha, formatTasa } from '../utils/formatters';
 import toast from 'react-hot-toast';
 import TicketFactura from '../components/print/TicketFactura';
 import Pagination from '../components/common/Pagination';
@@ -15,6 +15,9 @@ import { useAuth } from '../contexts/AuthContext';
 
 // Una factura solo se anula el mismo día; después se corrige con nota de crédito
 const esDeHoy = (f) => new Date(f.fecha_emision).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA');
+
+// Tasa de la factura: lo ya emitido nunca se muestra a la tasa de hoy
+const tasaDocumento = (f) => f.tasas_cambio?.tasa_usd_bs || (f.total_usd > 0 ? (f.total_bs / f.total_usd) : 0);
 
 export default function HistorialFacturas() {
   const { profile } = useAuth();
@@ -196,8 +199,8 @@ export default function HistorialFacturas() {
                 <th>N° Factura</th>
                 <th>Cliente</th>
                 <th>Vendedor</th>
-                <th>Total USD</th>
                 <th>Total Bs</th>
+                <th>Ref. USD</th>
                 <th>Estado</th>
                 <th>Fecha</th>
                 <th>Acciones</th>
@@ -218,8 +221,8 @@ export default function HistorialFacturas() {
                     </td>
                     <td>{f.clientes?.nombre}</td>
                     <td>{f.usuarios?.nombre_completo}</td>
-                    <td>{formatUSD(f.total_usd)}</td>
                     <td>{formatBs(f.total_bs)}</td>
+                    <td style={{ color: 'var(--text-secondary)' }}>{formatDolares(f.total_usd)}</td>
                     <td>
                       <span className={`badge badge--${f.estado === 'emitida' ? 'success' : 'danger'}`}>
                         {f.estado.charAt(0).toUpperCase() + f.estado.slice(1)}
@@ -280,16 +283,16 @@ export default function HistorialFacturas() {
                     <tr key={d.id}>
                       <td>{d.producto_nombre}</td>
                       <td>{d.cantidad}</td>
-                      <td>{formatUSD(d.precio_unitario_usd)}</td>
-                      <td>{formatUSD(d.subtotal_usd || d.cantidad * d.precio_unitario_usd)}</td>
+                      <td>{formatMonto(d.precio_unitario_usd, tasaDocumento(showDetalle))}</td>
+                      <td>{formatMonto(d.subtotal_usd || d.cantidad * d.precio_unitario_usd, tasaDocumento(showDetalle))}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
 
               <div className="pos-totals" style={{ marginTop: '1rem' }}>
-                <div className="pos-totals__row pos-totals__row--total"><span>Total USD:</span><span>{formatUSD(showDetalle.total_usd)}</span></div>
-                <div className="pos-totals__row pos-totals__row--bs"><span>Total Bs:</span><span>{formatBs(showDetalle.total_bs)}</span></div>
+                <div className="pos-totals__row pos-totals__row--total"><span>Total Bs:</span><span>{formatBs(showDetalle.total_bs)}</span></div>
+                <div className="pos-totals__row pos-totals__row--bs"><span>Ref. USD:</span><span>{formatDolares(showDetalle.total_usd)}</span></div>
               </div>
 
               <h4 style={{ marginTop: '1rem' }}>Métodos de Pago</h4>
@@ -316,7 +319,7 @@ export default function HistorialFacturas() {
 
                 const metodosPago = showDetalle.metodos_pago || [];
                 const casheaItem = metodosPago.find(mp => mp.metodo_id === 'cashea' || mp.metodo?.toLowerCase?.().includes('cashea'));
-                const tasaValor = showDetalle.tasas_cambio?.tasa_usd_bs || (showDetalle.total_usd > 0 ? (showDetalle.total_bs / showDetalle.total_usd) : 0);
+                const tasaValor = tasaDocumento(showDetalle);
 
                 if (casheaItem) {
                   const otrosMetodos = metodosPago.filter(mp => mp !== casheaItem);
@@ -393,11 +396,11 @@ export default function HistorialFacturas() {
                             Inicial Pagada (en Tienda)
                           </div>
                           <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#10B981', marginTop: '2px' }}>
-                            {formatUSD(totalInicialUSD)}
+                            {formatMonto(totalInicialUSD, tasaValor)}
                           </div>
                           {totalInicialBs > 0 && (
                             <div style={{ fontSize: '0.75rem', color: '#aaa' }}>
-                              Ref. {formatBs(totalInicialBs)}
+                              Ref. {formatDolares(totalInicialUSD)}
                             </div>
                           )}
                           <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.4rem' }}>
@@ -411,7 +414,7 @@ export default function HistorialFacturas() {
 
                               return (
                                 <div key={idx} style={{ color: '#ccc', marginTop: '2px' }}>
-                                  • <strong>{di.metodo}:</strong> {isBs ? `${formatBs(diBs)} (Ref. ${formatUSD(diUSD)})` : `${formatUSD(diUSD)}`}
+                                  • <strong>{di.metodo}:</strong> {isBs ? `${formatBs(diBs)} (Ref. ${formatDolares(diUSD)})` : `${formatMonto(diUSD, tasaValor)} (Ref. ${formatDolares(diUSD)})`}
                                   {di.referencia ? ` (N° Op: ${di.referencia})` : ''}
                                   {di.titular ? ` (Emisor: ${di.titular})` : ''}
                                 </div>
@@ -426,11 +429,11 @@ export default function HistorialFacturas() {
                             Monto Financiado Cashea
                           </div>
                           <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#EC4899', marginTop: '2px' }}>
-                            {formatUSD(debiendoUSD)}
+                            {debiendoBs > 0 ? formatBs(debiendoBs) : formatMonto(debiendoUSD, tasaValor)}
                           </div>
                           {debiendoBs > 0 && (
                             <div style={{ fontSize: '0.75rem', color: '#aaa' }}>
-                              Ref. {formatBs(debiendoBs)}
+                              Ref. {formatDolares(debiendoUSD)}
                             </div>
                           )}
                           <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: '#aaa', fontStyle: 'italic' }}>
@@ -459,7 +462,7 @@ export default function HistorialFacturas() {
                       <div key={i} className="pos-totals__row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span>{mp.metodo} {extraInfo.length > 0 ? `(${extraInfo.join(' | ')})` : ''}</span>
                         <span style={{ fontWeight: 'bold' }}>
-                          {formatBs(montoBs)} <small style={{ color: '#aaa', fontWeight: 'normal' }}>(Ref. {formatUSD(montoUSD)})</small>
+                          {formatBs(montoBs)} <small style={{ color: '#aaa', fontWeight: 'normal' }}>(Ref. {formatDolares(montoUSD)})</small>
                         </span>
                       </div>
                     );
@@ -469,7 +472,7 @@ export default function HistorialFacturas() {
                     <div key={i} className="pos-totals__row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span>{mp.metodo} {extraInfo.length > 0 ? `(${extraInfo.join(' | ')})` : ''}</span>
                       <span style={{ fontWeight: 'bold' }}>
-                        {formatUSD(montoUSD)} {montoBs > 0 ? <small style={{ color: '#aaa', fontWeight: 'normal' }}>(Ref. {formatBs(montoBs)})</small> : ''}
+                        {formatMonto(montoUSD, tasaValor)} {montoBs > 0 ? <small style={{ color: '#aaa', fontWeight: 'normal' }}>(Ref. {formatDolares(montoUSD)})</small> : ''}
                       </span>
                     </div>
                   );
@@ -486,7 +489,7 @@ export default function HistorialFacturas() {
                         <code>{n.numero}</code> · {formatFecha(n.fecha_emision)} · {n.motivo}
                       </span>
                       <span>
-                        {n.tipo === 'CREDITO' ? '−' : '+'}{formatUSD(n.total_usd)}
+                        {n.tipo === 'CREDITO' ? '−' : '+'}{formatBs(n.total_bs)}
                         <button className="btn btn--ghost btn--xs" onClick={() => imprimirNota(n, showDetalle)} title="Imprimir nota"><HiOutlinePrinter /></button>
                       </span>
                     </div>

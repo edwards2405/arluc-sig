@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { formatFecha, getWhatsAppUrl, getPhoneCallUrl } from '../utils/formatters';
+import { formatFecha, formatMonto, getWhatsAppUrl, getPhoneCallUrl } from '../utils/formatters';
 import toast from 'react-hot-toast';
 import Pagination from '../components/common/Pagination';
 import { useAuth } from '../contexts/AuthContext';
@@ -247,7 +247,7 @@ export default function Clientes() {
                             {c.credito_activo ? '✓ Activo' : '✗ Inactivo'}
                           </span>
                           <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                            {c.moneda_credito === 'usd' ? `$${Number(c.linea_credito).toFixed(2)}` : `Bs ${Number(c.linea_credito).toLocaleString('es-VE', { minimumFractionDigits: 2 })}`}
+                            {c.moneda_credito === 'usd' ? formatMonto(c.linea_credito) : `Bs ${Number(c.linea_credito).toLocaleString('es-VE', { minimumFractionDigits: 2 })}`}
                           </span>
                         </div>
                       ) : (
@@ -340,12 +340,13 @@ export default function Clientes() {
                     </p>
                     <div className="form-row">
                       <div className="form-group">
-                        <label>Límite de Crédito</label>
+                        <label>Límite de Crédito ({form.moneda_credito === 'usd' ? 'USD' : 'Bs'})</label>
                         <input
                           type="number" min="0" step="0.01"
                           value={form.linea_credito}
                           onChange={e => setForm({ ...form, linea_credito: e.target.value })}
                         />
+                        {form.moneda_credito === 'usd' && Number(form.linea_credito) > 0 && <small>≈ {formatMonto(form.linea_credito)}</small>}
                       </div>
                       <div className="form-group">
                         <label>Moneda del Crédito</label>
@@ -409,12 +410,13 @@ export default function Clientes() {
             <form onSubmit={handleSaveCredito} className="modal__form">
               <div className="form-row">
                 <div className="form-group">
-                  <label>Límite de Crédito</label>
+                  <label>Límite de Crédito ({creditoForm.moneda_credito === 'usd' ? 'USD' : 'Bs'})</label>
                   <input
                     type="number" min="0" step="0.01"
                     value={creditoForm.linea_credito}
                     onChange={e => setCreditoForm({ ...creditoForm, linea_credito: e.target.value })}
                   />
+                  {creditoForm.moneda_credito === 'usd' && Number(creditoForm.linea_credito) > 0 && <small>≈ {formatMonto(creditoForm.linea_credito)}</small>}
                 </div>
                 <div className="form-group">
                   <label>Moneda</label>

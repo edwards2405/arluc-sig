@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { formatUSD, formatBs, formatFecha } from '../utils/formatters';
+import { formatMonto, formatBs, formatDolares, formatFecha } from '../utils/formatters';
 import Pagination from '../components/common/Pagination';
 import {
   HiOutlineMagnifyingGlass,
@@ -108,7 +108,7 @@ export default function CuentasPorPagar() {
       if (error) throw error;
       const dif = Number(data.diferencial_bs);
       toast.success(
-        `Pago registrado${Number(data.igtf_usd) > 0 ? ` (IGTF ${formatUSD(data.igtf_usd)})` : ''}` +
+        `Pago registrado${Number(data.igtf_usd) > 0 ? ` (IGTF ${formatMonto(data.igtf_usd)})` : ''}` +
           (dif !== 0 ? ` · ${dif > 0 ? 'Ganancia' : 'Pérdida'} cambiaria ${formatBs(Math.abs(dif))}` : '')
       );
       const actualizadas = await cargarDatos();
@@ -141,15 +141,15 @@ export default function CuentasPorPagar() {
           <div className="stat-card__icon" style={{ background: 'rgba(99, 102, 241, 0.15)', color: '#6366F1' }}><HiOutlineBanknotes /></div>
           <div className="stat-card__content">
             <span className="stat-card__label">Total por pagar</span>
-            <span className="stat-card__value">{formatUSD(stats.total)}</span>
-            <span className="stat-card__sub">{tasa > 0 ? formatBs(stats.total * tasa) : ''} · {stats.proveedores} proveedor(es)</span>
+            <span className="stat-card__value">{formatMonto(stats.total)}</span>
+            <span className="stat-card__sub">Ref. {formatDolares(stats.total)} · {stats.proveedores} proveedor(es)</span>
           </div>
         </div>
         <div className="stat-card">
           <div className="stat-card__icon" style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#EF4444' }}><HiOutlineExclamationTriangle /></div>
           <div className="stat-card__content">
             <span className="stat-card__label">Vencido</span>
-            <span className="stat-card__value" style={{ color: '#EF4444' }}>{formatUSD(stats.vencido)}</span>
+            <span className="stat-card__value" style={{ color: '#EF4444' }}>{formatMonto(stats.vencido)}</span>
             <span className="stat-card__sub">Riesgo de recargos y de perder crédito</span>
           </div>
         </div>
@@ -157,7 +157,7 @@ export default function CuentasPorPagar() {
           <div className="stat-card__icon" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#F59E0B' }}><HiOutlineClock /></div>
           <div className="stat-card__content">
             <span className="stat-card__label">Vence en 7 días</span>
-            <span className="stat-card__value" style={{ color: '#F59E0B' }}>{formatUSD(stats.porVencer)}</span>
+            <span className="stat-card__value" style={{ color: '#F59E0B' }}>{formatMonto(stats.porVencer)}</span>
             <span className="stat-card__sub">Planificar flujo de caja</span>
           </div>
         </div>
@@ -195,8 +195,8 @@ export default function CuentasPorPagar() {
                     <td><code>{c.ordenes_compra?.numero_orden}</code><div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{c.ordenes_compra?.numero_factura_proveedor || 'Sin factura'}</div></td>
                     <td>{formatFecha(c.fecha_emision)}</td>
                     <td style={{ color: vencida ? '#EF4444' : undefined, fontWeight: vencida ? 700 : 400 }}>{formatFecha(c.fecha_vencimiento)}</td>
-                    <td>{formatUSD(c.monto_usd)}<div className="text-xs" style={{ color: 'var(--text-secondary)' }}>Tasa origen {Number(c.tasa_origen).toFixed(2)}</div></td>
-                    <td><strong>{formatUSD(c.saldo_usd)}</strong></td>
+                    <td>{formatMonto(c.monto_usd)}<div className="text-xs" style={{ color: 'var(--text-secondary)' }}>Tasa origen {Number(c.tasa_origen).toFixed(2)}</div></td>
+                    <td><strong>{formatMonto(c.saldo_usd)}</strong></td>
                     <td>
                       <span className={`badge ${c.estado === 'PAGADA' ? 'badge--success' : vencida ? 'badge--danger' : 'badge--warning'}`}>
                         {c.estado === 'PAGADA' ? 'Pagada' : vencida ? 'Vencida' : 'Pendiente'}
@@ -224,7 +224,7 @@ export default function CuentasPorPagar() {
               <h2>{cuentaAPagar.proveedores?.nombre} · {cuentaAPagar.ordenes_compra?.numero_orden}</h2>
             </div>
             <div className="modal__form">
-              <p>Saldo pendiente: <strong>{formatUSD(cuentaAPagar.saldo_usd)}</strong> de {formatUSD(cuentaAPagar.monto_usd)}</p>
+              <p>Saldo pendiente: <strong>{formatMonto(cuentaAPagar.saldo_usd)}</strong> (Ref. {formatDolares(cuentaAPagar.saldo_usd)}) · Monto original {formatMonto(cuentaAPagar.monto_usd, cuentaAPagar.tasa_origen)}</p>
 
               {cuentaAPagar.estado === 'PENDIENTE' && puedePagar && (
                 <form onSubmit={registrarPago}>
@@ -255,11 +255,11 @@ export default function CuentasPorPagar() {
               <h3 style={{ marginTop: '1rem' }}>Pagos registrados ({cuentaAPagar.pagos_cxp?.length || 0})</h3>
               {(cuentaAPagar.pagos_cxp || []).map((p) => (
                 <div key={p.id} style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--border)', fontSize: '0.85rem' }}>
-                  <strong>{formatUSD(p.monto_usd)}</strong> · {p.metodo_id} · {formatFecha(p.fecha, true)}
+                  <strong>{formatBs(p.monto_bs)}</strong> · {p.metodo_id} · {formatFecha(p.fecha, true)}
                   {p.referencia && ` · Ref. ${p.referencia}`}
                   <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
-                    {formatBs(p.monto_bs)}
-                    {Number(p.igtf_usd) > 0 && ` · IGTF ${formatUSD(p.igtf_usd)}`}
+                    Ref. {formatDolares(p.monto_usd)}
+                    {Number(p.igtf_usd) > 0 && ` · IGTF ${formatMonto(p.igtf_usd, Number(p.monto_bs) / (Number(p.monto_usd) + Number(p.igtf_usd)))}`}
                     {Number(p.diferencial_bs) !== 0 &&
                       ` · ${Number(p.diferencial_bs) > 0 ? 'Ganancia' : 'Pérdida'} cambiaria ${formatBs(Math.abs(p.diferencial_bs))}`}
                   </div>

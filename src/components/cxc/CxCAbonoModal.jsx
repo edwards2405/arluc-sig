@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { HiOutlineBanknotes, HiOutlineTrash, HiOutlineCheck } from 'react-icons/hi2';
-import { formatUSD, formatBs, formatFecha } from '../../utils/formatters';
+import { formatMonto, formatDolares, formatBs, formatFecha } from '../../utils/formatters';
 import toast from 'react-hot-toast';
+
+// Tasa a la que se cobró el abono: monto_bs incluye el IGTF.
+const tasaDelAbono = (a) => a.monto_bs / (a.monto_usd + a.igtf_usd);
 
 export default function CxCAbonoModal({
   isOpen,
@@ -22,7 +25,6 @@ export default function CxCAbonoModal({
 
   const abonos = cuenta.abonos || [];
   const saldoActualUSD = cuenta.saldoTotalUSD;
-  const saldoActualBs = tasaValor > 0 ? saldoActualUSD * tasaValor : 0;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -32,7 +34,7 @@ export default function CxCAbonoModal({
       return;
     }
     if (monto > saldoActualUSD + 0.05) {
-      toast.error(`El monto supera el saldo deudor pendiente ($${saldoActualUSD.toFixed(2)})`);
+      toast.error(`El monto supera el saldo deudor pendiente (${formatMonto(saldoActualUSD)} · Ref. ${formatDolares(saldoActualUSD)})`);
       return;
     }
 
@@ -105,10 +107,10 @@ export default function CxCAbonoModal({
           >
             <div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Deuda Original</div>
-              <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{formatUSD(cuenta.montoOriginalUSD)}</div>
+              <div style={{ fontWeight: 600, fontSize: '0.95rem' }}>{formatMonto(cuenta.montoOriginalUSD)}</div>
               {cuenta.recargoUSD > 0 && (
                 <div style={{ fontSize: '0.75rem', color: '#EF4444' }}>
-                  +{formatUSD(cuenta.recargoUSD)} ({cuenta.porcentajeAplicado}% recargo)
+                  +{formatMonto(cuenta.recargoUSD)} ({cuenta.porcentajeAplicado}% recargo)
                 </div>
               )}
             </div>
@@ -116,10 +118,10 @@ export default function CxCAbonoModal({
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Saldo Deudor Pendiente</div>
               <div style={{ fontWeight: 800, fontSize: '1.25rem', color: saldoActualUSD > 0 ? '#EF4444' : '#10B981' }}>
-                {formatUSD(saldoActualUSD)}
+                {formatMonto(saldoActualUSD)}
               </div>
               {tasaValor > 0 && saldoActualUSD > 0 && (
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{formatBs(saldoActualBs)}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Ref. {formatDolares(saldoActualUSD)}</div>
               )}
             </div>
           </div>
@@ -197,7 +199,7 @@ export default function CxCAbonoModal({
                 fontWeight: 600,
               }}
             >
-              ✓ Esta cuenta se encuentra completamente solvente (Saldo $0.00)
+              ✓ Esta cuenta se encuentra completamente solvente (Saldo Bs 0,00)
             </div>
           )}
 
@@ -227,14 +229,14 @@ export default function CxCAbonoModal({
                     }}
                   >
                     <div>
-                      <div style={{ fontWeight: 600, color: '#10B981' }}>+{formatUSD(a.monto_usd)}</div>
+                      <div style={{ fontWeight: 600, color: '#10B981' }}>+{formatBs(a.monto_bs)}</div>
                       <div style={{ color: 'var(--text-secondary)', fontSize: '0.72rem' }}>
                         {formatFecha(a.fecha, true)} • {a.metodo?.toUpperCase()} {a.notas ? `(${a.notas})` : ''}
                       </div>
                       <div style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>
-                        Capital {formatUSD(a.aplicado_capital_usd)}
-                        {a.aplicado_recargo_usd > 0 && ` · Recargo ${formatUSD(a.aplicado_recargo_usd)}`}
-                        {a.igtf_usd > 0 && ` · IGTF ${formatUSD(a.igtf_usd)}`}
+                        Capital {formatMonto(a.aplicado_capital_usd, tasaDelAbono(a))}
+                        {a.aplicado_recargo_usd > 0 && ` · Recargo ${formatMonto(a.aplicado_recargo_usd, tasaDelAbono(a))}`}
+                        {a.igtf_usd > 0 && ` · IGTF ${formatMonto(a.igtf_usd, tasaDelAbono(a))}`}
                         {a.diferencial_bs !== 0 &&
                           ` · Dif. cambiario ${a.diferencial_bs > 0 ? '+' : ''}${a.diferencial_bs.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs`}
                       </div>

@@ -3,7 +3,7 @@ import toast from 'react-hot-toast';
 import { exportarExcel, imprimirReporte } from '../../utils/reportes';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { formatBs, formatFecha } from '../../utils/formatters';
+import { formatBs, formatMonto, formatFecha } from '../../utils/formatters';
 import { getEmpresaConfig } from '../../utils/constants';
 import Pagination from '../../components/common/Pagination';
 import usePaginacion from '../../hooks/usePaginacion';
@@ -202,7 +202,7 @@ export default function LibrosFiscales() {
     if (error) { toast.error(error.message); return; }
     const dif = Number(data.diferencial_usd);
     toast.success(`Enterados ${formatBs(data.total_bs)} (${data.comprobantes} comprobantes)` +
-      (dif !== 0 ? ` · diferencial ${dif > 0 ? '+' : ''}${dif.toFixed(2)} USD` : ''));
+      (dif !== 0 ? ` · diferencial ${dif > 0 ? '+' : ''}${formatMonto(dif)}` : ''));
     cargar();
   }
 

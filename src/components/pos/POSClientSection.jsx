@@ -1,4 +1,5 @@
 import { HiOutlineMagnifyingGlass, HiOutlineUserPlus, HiOutlineXMark, HiOutlineCreditCard } from 'react-icons/hi2';
+import { formatMonto } from '../../utils/formatters';
 
 function CreditoBadge({ cliente }) {
   if (!cliente) return null;
@@ -10,7 +11,7 @@ function CreditoBadge({ cliente }) {
   const moneda = cliente.moneda_credito || 'usd';
   const limite = parseFloat(cliente.linea_credito || 0);
   const limiteStr = moneda === 'usd'
-    ? `$${limite.toFixed(2)}`
+    ? formatMonto(limite)
     : `Bs ${limite.toLocaleString('es-VE', { minimumFractionDigits: 2 })}`;
 
   return (

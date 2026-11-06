@@ -12,7 +12,7 @@ import {
   HiOutlinePrinter,
 } from 'react-icons/hi2';
 import { supabase } from '../lib/supabase';
-import { formatUSD } from '../utils/formatters';
+import { formatMonto } from '../utils/formatters';
 import Pagination from '../components/common/Pagination';
 import usePaginacion from '../hooks/usePaginacion';
 
@@ -297,7 +297,7 @@ export default function ReportesInventario() {
         { Indicador: 'Días analizados', Valor: diasPeriodo },
         { Indicador: 'Unidades vendidas', Valor: calculos.unidadesVendidas },
         { Indicador: 'Productos con ventas', Valor: calculos.filasVentas.length },
-        { Indicador: 'Valor del inventario actual (USD)', Valor: valorInventario },
+        { Indicador: 'Valor del inventario actual (Bs)', Valor: formatMonto(valorInventario) },
       ], 'Resumen');
       agregarHoja(calculos.diario.map(item => ({
         Fecha: item.fecha,
@@ -459,7 +459,7 @@ export default function ReportesInventario() {
           </article>
           <article className="inventory-report-summary-card">
             <span>Valor actual del inventario</span>
-            <strong>{formatUSD(valorInventario)}</strong>
+            <strong>{formatMonto(valorInventario)}</strong>
           </article>
           <article className="inventory-report-summary-card">
             <span>Productos bajo mínimo</span>

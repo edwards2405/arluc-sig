@@ -1,22 +1,15 @@
 import { HiOutlineArrowDownTray, HiOutlinePrinter, HiOutlineCheckCircle, HiOutlineExclamationTriangle } from 'react-icons/hi2';
 import toast from 'react-hot-toast';
-import { exportarExcel, imprimirReporte } from '../../utils/reportes';
-import { formatFecha } from '../../utils/formatters';
+import { exportarExcel, imprimirReporte, formatoTexto } from '../../utils/reportes';
+import { montosEnBs } from '../../utils/formatters';
 import Pagination from '../common/Pagination';
 import usePaginacion from '../../hooks/usePaginacion';
 
 const esNumerico = (tipo) => ['monto', 'usd', 'bs', 'numero', 'porcentaje'].includes(tipo);
 
-function formato(valor, tipo) {
+function formato(valor, tipo, reporte) {
   if (valor === null || valor === undefined || valor === '') return '—';
-  const n = Number(valor);
-  const dos = (x) => x.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (tipo === 'usd' || tipo === 'monto') return `${n < 0 ? '−' : ''}$ ${dos(Math.abs(n))}`;
-  if (tipo === 'bs') return `${n < 0 ? '−' : ''}Bs ${dos(Math.abs(n))}`;
-  if (tipo === 'numero') return n.toLocaleString('es-VE');
-  if (tipo === 'porcentaje') return `${n.toLocaleString('es-VE', { maximumFractionDigits: 1 })} %`;
-  if (tipo === 'fecha') return formatFecha(valor);
-  return String(valor);
+  return formatoTexto(valor, tipo, reporte.moneda, Number(reporte.tasa) || undefined);
 }
 
 /**
@@ -44,9 +37,9 @@ export function FichaCalidad({ calidad, verificaciones = [] }) {
           const info = v.tipo === 'info';
           const color = info ? 'var(--info)' : v.ok ? 'var(--success)' : 'var(--warning)';
           return (
-            <div key={v.control} style={{ fontSize: '0.8rem', display: 'flex', gap: '0.35rem', alignItems: 'flex-start', marginTop: '0.25rem', color }} title={v.detalle}>
+            <div key={v.control} style={{ fontSize: '0.8rem', display: 'flex', gap: '0.35rem', alignItems: 'flex-start', marginTop: '0.25rem', color }} title={montosEnBs(v.detalle)}>
               {v.ok || info ? <HiOutlineCheckCircle style={{ flexShrink: 0, marginTop: 2 }} /> : <HiOutlineExclamationTriangle style={{ flexShrink: 0, marginTop: 2 }} />}
-              <span>{v.control}{!v.ok && !info && v.detalle ? ` (${v.detalle})` : ''}</span>
+              <span>{v.control}{!v.ok && !info && v.detalle ? ` (${montosEnBs(v.detalle)})` : ''}</span>
             </div>
           );
         })}
@@ -56,7 +49,7 @@ export function FichaCalidad({ calidad, verificaciones = [] }) {
 }
 
 /** Una sección del reporte: paginada en pantalla, con los totales siempre visibles. */
-function TablaSeccion({ seccion: s }) {
+function TablaSeccion({ seccion: s, reporte }) {
   const esTotal = (f) => f._estilo === 'total' || f._estilo === 'subtotal';
   const detalle = s.filas.filter((f) => !esTotal(f));
   const totales = s.filas.filter(esTotal);
@@ -66,7 +59,7 @@ function TablaSeccion({ seccion: s }) {
       {s.columnas.map((c) => (
         <td key={c.clave} style={{ textAlign: esNumerico(c.tipo) ? 'right' : 'left', whiteSpace: c.tipo === 'codigo' || esNumerico(c.tipo) ? 'nowrap' : undefined,
           fontVariantNumeric: 'tabular-nums' }}>
-          {formato(f[c.clave], c.tipo)}
+          {formato(f[c.clave], c.tipo, reporte)}
         </td>
       ))}
     </tr>
@@ -133,7 +126,7 @@ export default function VistaReporte({ reporte, verificaciones = [], extra }) {
             <div key={r.etiqueta} className="stat-card" style={{ padding: '0.9rem 1rem' }}>
               <div className="stat-card__content">
                 <span className="stat-card__label">{r.etiqueta}</span>
-                <span className="stat-card__value" style={{ fontSize: '1.2rem' }}>{formato(r.valor, r.tipo || 'usd')}</span>
+                <span className="stat-card__value" style={{ fontSize: '1.2rem' }}>{formato(r.valor, r.tipo || 'usd', reporte)}</span>
                 {r.detalle && <span className="stat-card__sub">{r.detalle}</span>}
               </div>
             </div>
@@ -143,7 +136,7 @@ export default function VistaReporte({ reporte, verificaciones = [], extra }) {
 
       {extra}
 
-      {(reporte.hojas ? reporte.hojas.flatMap((h) => h.secciones) : reporte.secciones).map((s, i) => <TablaSeccion key={`${reporte.titulo}-${reporte.subtitulo}-${i}`} seccion={s} />)}
+      {(reporte.hojas ? reporte.hojas.flatMap((h) => h.secciones) : reporte.secciones).map((s, i) => <TablaSeccion key={`${reporte.titulo}-${reporte.subtitulo}-${i}`} seccion={s} reporte={reporte} />)}
 
       {reporte.notas?.map((n) => <p key={n} className="stat-card__sub" style={{ marginTop: '0.35rem' }}>{n}</p>)}
     </div>

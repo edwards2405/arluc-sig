@@ -4,6 +4,8 @@ import Sidebar from './Sidebar';
 import ThemeToggle from '../common/ThemeToggle';
 import { HiOutlineBars3 } from 'react-icons/hi2';
 import { sincronizarTasaBCV } from '../../services/bcvService';
+import { supabase } from '../../lib/supabase';
+import { getTasaPantalla, setTasaPantalla } from '../../utils/formatters';
 
 export default function AppLayout() {
   // Mobile drawer open state
@@ -11,6 +13,19 @@ export default function AppLayout() {
   // Desktop collapsed state
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
+  // Las pantallas muestran montos en Bs: esperan a conocer la tasa vigente
+  const [tasaLista, setTasaLista] = useState(getTasaPantalla() > 0);
+
+  useEffect(() => {
+    const cargar = async () => {
+      const { data } = await supabase.rpc('tasa_vigente');
+      setTasaPantalla(data);
+      setTasaLista(true);
+    };
+    cargar();
+    window.addEventListener('arluc_tasa_actualizada', cargar);
+    return () => window.removeEventListener('arluc_tasa_actualizada', cargar);
+  }, []);
 
   // Tasa BCV: se sincroniza al abrir la app y cada 15 minutos (además del cron del servidor)
   useEffect(() => {
@@ -79,7 +94,7 @@ export default function AppLayout() {
         </header>
 
         <main className="app-layout__main">
-          <Outlet />
+          {tasaLista ? <Outlet /> : <div className="loading-screen"><div className="loading-spinner" /></div>}
         </main>
       </div>
     </div>

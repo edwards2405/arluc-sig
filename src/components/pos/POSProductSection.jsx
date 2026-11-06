@@ -1,10 +1,11 @@
 import { HiOutlineMagnifyingGlass } from 'react-icons/hi2';
-import { formatUSD } from '../../utils/formatters';
+import { formatMonto } from '../../utils/formatters';
 
 export default function POSProductSection({
   productoSearchRef,
   productoSearch,
   productoResults,
+  tasa,
   onSearchChange,
   onSelectProducto,
 }) {
@@ -39,7 +40,7 @@ export default function POSProductSection({
                   {p.sku} — Stock: {p.stock}
                 </span>
               </div>
-              <span className="search-result-item__price">{formatUSD(p.precio_usd)}</span>
+              <span className="search-result-item__price">{formatMonto(p.precio_usd, tasa)}</span>
             </button>
           ))}
         </div>

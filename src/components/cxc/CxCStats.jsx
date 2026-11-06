@@ -5,11 +5,9 @@ import {
   HiOutlineExclamationCircle,
   HiOutlineCheckCircle,
 } from 'react-icons/hi2';
-import { formatUSD, formatBs } from '../../utils/formatters';
+import { formatMonto, formatDolares } from '../../utils/formatters';
 
 export default function CxCStats({ stats, tasaValor }) {
-  const totalBs = tasaValor > 0 ? stats.totalSaldoPendienteUSD * tasaValor : 0;
-
   return (
     <div className="stats-grid">
       <div className="stat-card">
@@ -19,10 +17,10 @@ export default function CxCStats({ stats, tasaValor }) {
         <div className="stat-card__content">
           <span className="stat-card__label">Total Deuda Pendiente</span>
           <span className="stat-card__value" style={{ color: '#6366F1' }}>
-            {formatUSD(stats.totalSaldoPendienteUSD)}
+            {formatMonto(stats.totalSaldoPendienteUSD)}
           </span>
           <span className="stat-card__sub">
-            {tasaValor > 0 ? formatBs(totalBs) : `${stats.totalCuentas} cuenta(s) activa(s)`}
+            {tasaValor > 0 ? `Ref. ${formatDolares(stats.totalSaldoPendienteUSD)}` : `${stats.totalCuentas} cuenta(s) activa(s)`}
           </span>
         </div>
       </div>
@@ -38,7 +36,7 @@ export default function CxCStats({ stats, tasaValor }) {
           </span>
           <span className="stat-card__sub">
             {stats.recargosGeneradosUSD > 0
-              ? `+${formatUSD(stats.recargosGeneradosUSD)} por recargos`
+              ? `+${formatMonto(stats.recargosGeneradosUSD)} por recargos`
               : 'Al día o dentro del límite'}
           </span>
         </div>
@@ -64,7 +62,7 @@ export default function CxCStats({ stats, tasaValor }) {
         <div className="stat-card__content">
           <span className="stat-card__label">Total Abonos Recibidos</span>
           <span className="stat-card__value" style={{ color: '#10B981' }}>
-            {formatUSD(stats.totalAbonadoUSD)}
+            {formatMonto(stats.totalAbonadoUSD)}
           </span>
           <span className="stat-card__sub">Cobranzas registradas</span>
         </div>

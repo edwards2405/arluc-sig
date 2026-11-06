@@ -9,6 +9,7 @@
  */
 
 import { supabase } from '../lib/supabase';
+import { formatMonto } from '../utils/formatters';
 
 const PAGE_SIZE = 1000;
 
@@ -177,7 +178,7 @@ export async function anularAbono(abonoId, motivo) {
 /**
  * Construye el mensaje personalizado para WhatsApp
  */
-export function generarMensajeCobroWhatsApp({ cliente, cuenta, saldoTotalUSD, saldoTotalBs, dias, recargoUSD, porcentajeRecargo, empresa }) {
+export function generarMensajeCobroWhatsApp({ cliente, cuenta, saldoTotalUSD, dias, recargoUSD, porcentajeRecargo, empresa }) {
   const nombreCliente = cliente?.nombre || 'Estimado(a) Cliente';
   const nombreEmpresa = empresa?.nombre || 'Comercializadora ARLUC';
   const telefonoEmpresa = empresa?.telefono ? ` al ${empresa.telefono}` : '';
@@ -187,13 +188,10 @@ export function generarMensajeCobroWhatsApp({ cliente, cuenta, saldoTotalUSD, sa
   msg += `⏳ Han transcurrido *${dias} día(s)* desde su emisión.\n`;
 
   if (recargoUSD > 0) {
-    msg += `⚠️ Su saldo incluye un recargo por mora del *${porcentajeRecargo}%* ($${recargoUSD.toFixed(2)} USD).\n`;
+    msg += `⚠️ Su saldo incluye un recargo por mora del *${porcentajeRecargo}%* (${formatMonto(recargoUSD)}).\n`;
   }
 
-  msg += `💰 *Saldo Pendiente a la fecha:* $${saldoTotalUSD.toFixed(2)} USD`;
-  if (saldoTotalBs > 0) {
-    msg += ` (Aprox. Bs. ${saldoTotalBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
-  }
+  msg += `💰 *Saldo Pendiente a la fecha:* ${formatMonto(saldoTotalUSD)}`;
   msg += `\n\nPor favor comuníquese con nosotros${telefonoEmpresa} para coordinar su pago o reporte de abono. ¡Muchas gracias!`;
 
   return encodeURIComponent(msg);

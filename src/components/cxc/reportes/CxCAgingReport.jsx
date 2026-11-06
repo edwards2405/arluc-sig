@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { formatUSD, formatBs, formatFecha } from '../../../utils/formatters';
+import { formatMonto, formatDolares, formatFecha } from '../../../utils/formatters';
 import { HiOutlineClock, HiOutlineFunnel, HiOutlineMagnifyingGlass } from 'react-icons/hi2';
 import Pagination from '../../common/Pagination';
 
@@ -92,10 +92,10 @@ export default function CxCAgingReport({ cuentas = [], tasaValor = 0, config = {
                 </span>
               </div>
               <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                {formatUSD(b.totalUSD)}
+                {formatMonto(b.totalUSD)}
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                {tasaValor > 0 && <span>{formatBs(b.totalUSD * tasaValor)} • </span>}
+                {tasaValor > 0 && <span>Ref. {formatDolares(b.totalUSD)} • </span>}
                 <span>{b.porcentaje.toFixed(1)}% de la cartera</span>
               </div>
             </div>
@@ -113,7 +113,7 @@ export default function CxCAgingReport({ cuentas = [], tasaValor = 0, config = {
             b.porcentaje > 0 && (
               <div
                 key={b.id}
-                title={`${b.label}: ${b.porcentaje.toFixed(1)}% (${formatUSD(b.totalUSD)})`}
+                title={`${b.label}: ${b.porcentaje.toFixed(1)}% (${formatMonto(b.totalUSD)})`}
                 style={{
                   width: `${b.porcentaje}%`,
                   height: '100%',
@@ -129,7 +129,7 @@ export default function CxCAgingReport({ cuentas = [], tasaValor = 0, config = {
             <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: b.color }} />
               <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{b.label}:</span>
-              <span style={{ color: 'var(--text-secondary)' }}>{formatUSD(b.totalUSD)} ({b.porcentaje.toFixed(1)}%)</span>
+              <span style={{ color: 'var(--text-secondary)' }}>{formatMonto(b.totalUSD)} ({b.porcentaje.toFixed(1)}%)</span>
             </div>
           ))}
         </div>
@@ -240,17 +240,17 @@ export default function CxCAgingReport({ cuentas = [], tasaValor = 0, config = {
                           {bucket.label}
                         </span>
                       </td>
-                      <td style={{ textAlign: 'right' }}>{formatUSD(c.montoOriginalUSD)}</td>
+                      <td style={{ textAlign: 'right' }}>{formatMonto(c.montoOriginalUSD)}</td>
                       <td style={{ textAlign: 'right', color: '#10B981' }}>
-                        {c.totalAbonadoUSD > 0 ? formatUSD(c.totalAbonadoUSD) : '—'}
+                        {c.totalAbonadoUSD > 0 ? formatMonto(c.totalAbonadoUSD) : '—'}
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <strong style={{ color: bucket.color, fontSize: '0.95rem' }}>
-                          {formatUSD(c.saldoTotalUSD)}
+                          {formatMonto(c.saldoTotalUSD)}
                         </strong>
                         {tasaValor > 0 && (
                           <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-                            {formatBs(c.saldoTotalUSD * tasaValor)}
+                            Ref. {formatDolares(c.saldoTotalUSD)}
                           </div>
                         )}
                       </td>

@@ -1,6 +1,6 @@
 import { HiOutlineCheckCircle, HiOutlinePrinter, HiOutlinePlus } from 'react-icons/hi2';
 import TicketFactura from '../print/TicketFactura';
-import { formatUSD, formatBs } from '../../utils/formatters';
+import { formatDolares, formatBs } from '../../utils/formatters';
 
 export default function POSInvoiceSuccess({
   facturaEmitida,
@@ -23,8 +23,8 @@ export default function POSInvoiceSuccess({
         </div>
         <h2>¡Factura Emitida!</h2>
         <p className="pos-success__numero">{facturaEmitida.numero_factura}</p>
-        <p className="pos-success__total">{formatUSD(facturaEmitida.total_usd)}</p>
-        <p className="pos-success__total-bs">{formatBs(facturaEmitida.total_bs)}</p>
+        <p className="pos-success__total">{formatBs(facturaEmitida.total_bs)}</p>
+        <p className="pos-success__total-bs">Ref. {formatDolares(facturaEmitida.total_usd)}</p>
 
         <div className="pos-success__actions">
           <button type="button" className="btn btn--primary" onClick={onShowTicket}>

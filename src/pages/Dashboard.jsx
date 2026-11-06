@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { formatUSD, formatBs, formatFecha } from '../utils/formatters';
+import { formatMonto, formatFecha, getTasaPantalla } from '../utils/formatters';
 import {
   HiOutlineBanknotes,
   HiOutlineDocumentText,
@@ -13,6 +13,14 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell,
 } from 'recharts';
+
+// Eje de gráficos en Bs con notación compacta: el monto completo no cabe en el eje
+const ejeMonto = (usd) => {
+  const tasa = getTasaPantalla();
+  return tasa > 0
+    ? `Bs ${new Intl.NumberFormat('es-VE', { notation: 'compact', maximumFractionDigits: 1 }).format(usd * tasa)}`
+    : formatMonto(usd);
+};
 
 export default function Dashboard() {
   const { profile } = useAuth();
@@ -156,7 +164,7 @@ export default function Dashboard() {
           </div>
           <div className="stat-card__content">
             <span className="stat-card__label">Ventas Hoy</span>
-            <span className="stat-card__value">{formatUSD(stats.ventasHoy)}</span>
+            <span className="stat-card__value">{formatMonto(stats.ventasHoy)}</span>
             <span className="stat-card__sub">{stats.facturasHoy} factura(s)</span>
           </div>
         </div>
@@ -167,7 +175,7 @@ export default function Dashboard() {
           </div>
           <div className="stat-card__content">
             <span className="stat-card__label">Ventas Semana</span>
-            <span className="stat-card__value">{formatUSD(stats.ventasSemana)}</span>
+            <span className="stat-card__value">{formatMonto(stats.ventasSemana)}</span>
             <span className="stat-card__sub">{stats.facturasSemana} factura(s)</span>
           </div>
         </div>
@@ -178,7 +186,7 @@ export default function Dashboard() {
           </div>
           <div className="stat-card__content">
             <span className="stat-card__label">Ventas del Mes</span>
-            <span className="stat-card__value">{formatUSD(stats.ventasMes)}</span>
+            <span className="stat-card__value">{formatMonto(stats.ventasMes)}</span>
             <span className="stat-card__sub">{stats.facturasMes} factura(s)</span>
           </div>
         </div>
@@ -215,11 +223,11 @@ export default function Dashboard() {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                 <XAxis dataKey="dia" tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} />
-                <YAxis tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} tickFormatter={(v) => `$${v}`} />
+                <YAxis width={80} tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} tickFormatter={ejeMonto} />
                 <Tooltip
                   contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: '8px' }}
                   labelStyle={{ color: 'var(--text-primary)' }}
-                  formatter={(value) => [`$${value.toFixed(2)}`, 'Ventas']}
+                  formatter={(value) => [formatMonto(value), 'Ventas']}
                 />
                 <Area type="monotone" dataKey="total" stroke="#22C55E" fill="url(#colorVentas)" strokeWidth={2} />
               </AreaChart>
@@ -276,7 +284,7 @@ export default function Dashboard() {
                       <tr key={i}>
                         <td>{v.nombre}</td>
                         <td>{v.facturas}</td>
-                        <td className="text-success">{formatUSD(v.total)}</td>
+                        <td className="text-success">{formatMonto(v.total)}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -6,7 +6,7 @@ import {
   HiOutlineArrowPath, HiOutlineCheckCircle,
 } from 'react-icons/hi2';
 import { supabase } from '../lib/supabase';
-import { formatUSD, formatFecha } from '../utils/formatters';
+import { formatMonto, formatFecha, ejeBs } from '../utils/formatters';
 import VistaReporte from '../components/reportes/VistaReporte';
 import Pagination from '../components/common/Pagination';
 import usePaginacion from '../hooks/usePaginacion';
@@ -57,7 +57,9 @@ function Programados() {
   async function abrir(r) {
     const { data, error } = await supabase.from('reportes_generados').select('*').eq('id', r.id).single();
     if (error) { toast.error(error.message); return; }
-    setSeleccionado(data);
+    // Un reporte ya emitido se expresa en Bs a la tasa de su período, no a la de hoy
+    const { data: tasa } = await supabase.rpc('tasa_vigente', { p_fecha: data.periodo_hasta });
+    setSeleccionado({ ...data, tasa });
   }
 
   async function regenerar() {
@@ -89,7 +91,7 @@ function Programados() {
               <HiOutlineArrowPath /> Regenerar
             </button>
           </div>
-          <VistaReporte reporte={modeloProgramado(seleccionado)} verificaciones={seleccionado.verificaciones} />
+          <VistaReporte reporte={{ ...modeloProgramado(seleccionado), tasa: seleccionado.tasa }} verificaciones={seleccionado.verificaciones} />
         </>
       ) : (
         <div className="card">
@@ -166,8 +168,8 @@ function Proyecciones() {
             <BarChart data={serie} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid stroke="var(--border)" vertical={false} />
               <XAxis dataKey="semana" stroke="var(--text-secondary)" tick={{ fontSize: 11 }} />
-              <YAxis stroke="var(--text-secondary)" tick={{ fontSize: 11 }} width={56} />
-              <Tooltip {...tooltipStyle} formatter={(v, _n, item) => [formatUSD(v), item.payload.tipo === 'REAL' ? 'Venta real' : 'Proyección']} />
+              <YAxis stroke="var(--text-secondary)" tick={{ fontSize: 11 }} width={64} tickFormatter={ejeBs} />
+              <Tooltip {...tooltipStyle} formatter={(v, _n, item) => [formatMonto(v), item.payload.tipo === 'REAL' ? 'Venta real' : 'Proyección']} />
               <Bar dataKey="ventas" radius={[4, 4, 0, 0]} maxBarSize={38}>
                 {serie.map((s, i) => (
                   <Cell key={i} fill="#2a78d6" fillOpacity={s.tipo === 'REAL' ? 1 : 0.35} stroke="#2a78d6" strokeDasharray={s.tipo === 'REAL' ? undefined : '4 3'} />
@@ -229,9 +231,9 @@ function Solicitud() {
               <ResponsiveContainer width="100%" height={Math.max(200, grafico.length * 30)}>
                 <BarChart data={grafico} layout="vertical" margin={{ top: 4, right: 20, left: 8, bottom: 0 }}>
                   <CartesianGrid stroke="var(--border)" horizontal={false} />
-                  <XAxis type="number" stroke="var(--text-secondary)" tick={{ fontSize: 11 }} />
+                  <XAxis type="number" stroke="var(--text-secondary)" tick={{ fontSize: 11 }} tickFormatter={ejeBs} />
                   <YAxis type="category" dataKey="grupo" stroke="var(--text-secondary)" tick={{ fontSize: 11 }} width={150} />
-                  <Tooltip {...tooltipStyle} formatter={(v) => [formatUSD(v), 'Ventas netas']} />
+                  <Tooltip {...tooltipStyle} formatter={(v) => [formatMonto(v), 'Ventas netas']} />
                   <Bar dataKey="ventas" fill="#2a78d6" radius={[0, 4, 4, 0]} maxBarSize={22} />
                 </BarChart>
               </ResponsiveContainer>

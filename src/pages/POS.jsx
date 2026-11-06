@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { METODOS_PAGO, METODOS_INICIAL_CASHEA } from '../utils/constants';
-import { formatTasa, formatUSD, formatFecha } from '../utils/formatters';
+import { formatTasa, formatMonto, formatFecha } from '../utils/formatters';
 import toast from 'react-hot-toast';
 import { sincronizarTasaBCV } from '../services/bcvService';
 import { HiOutlineArrowPath } from 'react-icons/hi2';
@@ -347,6 +347,7 @@ export default function POS() {
   const montoIva = redondear(baseGravada * Number(fiscal.alicuota_iva) / 100);
   const totalUSD = redondear(baseGravada + montoExento + montoIva);
   const totalBs = tasaHoy ? totalUSD * parseFloat(tasaHoy.tasa_usd_bs) : 0;
+  const tasaDia = tasaHoy ? parseFloat(tasaHoy.tasa_usd_bs) : undefined;
 
   // Cliente contribuyente especial: retiene parte del IVA (lo valida el servidor)
   const montoRetencion = clienteSeleccionado?.contribuyente_especial
@@ -493,7 +494,7 @@ export default function POS() {
     }
 
     if (restante > 0.01) {
-      toast.error(`Faltan ${formatUSD(restante)} por pagar`);
+      toast.error(`Faltan ${formatMonto(restante, tasaDia)} por pagar`);
       return;
     }
 
@@ -643,6 +644,7 @@ export default function POS() {
       {/* Barra de Cuentas Simultáneas */}
       <POSCuentasBar
         cuentas={cuentas}
+        tasa={tasaDia}
         cuentaActivaId={cuentaActiva.id}
         onSelectCuenta={setCuentaActivaId}
         onAgregarCuenta={agregarNuevaCuenta}
@@ -678,12 +680,14 @@ export default function POS() {
             productoSearchRef={productoSearchRef}
             productoSearch={productoSearch}
             productoResults={productoResults}
+            tasa={tasaDia}
             onSearchChange={searchProductos}
             onSelectProducto={agregarAlCarrito}
           />
 
           <POSCartSection
             carrito={carrito}
+            tasa={tasaDia}
             clienteSeleccionado={clienteSeleccionado}
             onActualizarCantidad={actualizarCantidad}
             onQuitarDelCarrito={quitarDelCarrito}

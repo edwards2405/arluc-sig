@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { formatUSD, formatBs, formatFecha, getWhatsAppUrl, getPhoneCallUrl } from '../../../utils/formatters';
+import { formatMonto, formatDolares, formatBs, formatFecha, getWhatsAppUrl, getPhoneCallUrl } from '../../../utils/formatters';
 import { HiOutlineUser, HiOutlinePhone, HiOutlineDocumentText, HiOutlinePrinter } from 'react-icons/hi2';
 import { FaWhatsapp, FaPhone } from 'react-icons/fa';
 
@@ -143,20 +143,20 @@ export default function CxCClientStatement({ cuentas = [], tasaValor = 0 }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
             <div style={{ padding: '0.75rem', background: 'var(--bg-elevated)', borderRadius: '8px', border: '1px solid var(--border)' }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Total Otorgado</div>
-              <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>{formatUSD(totalesCliente.original)}</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>{formatMonto(totalesCliente.original)}</div>
             </div>
             <div style={{ padding: '0.75rem', background: 'var(--bg-elevated)', borderRadius: '8px', border: '1px solid var(--border)' }}>
               <div style={{ fontSize: '0.75rem', color: '#EF4444' }}>Recargos Aplicados</div>
-              <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#EF4444' }}>{formatUSD(totalesCliente.recargo)}</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#EF4444' }}>{formatMonto(totalesCliente.recargo)}</div>
             </div>
             <div style={{ padding: '0.75rem', background: 'var(--bg-elevated)', borderRadius: '8px', border: '1px solid var(--border)' }}>
               <div style={{ fontSize: '0.75rem', color: '#10B981' }}>Total Abonado</div>
-              <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#10B981' }}>{formatUSD(totalesCliente.abonado)}</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#10B981' }}>{formatMonto(totalesCliente.abonado)}</div>
             </div>
             <div style={{ padding: '0.75rem', background: 'rgba(99,102,241,0.1)', borderRadius: '8px', border: '1px solid #6366F1' }}>
               <div style={{ fontSize: '0.75rem', color: '#6366F1', fontWeight: 700 }}>SALDO NETO PENDIENTE</div>
-              <div style={{ fontSize: '1.3rem', fontWeight: 900, color: '#6366F1' }}>{formatUSD(totalesCliente.saldo)}</div>
-              {tasaValor > 0 && <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{formatBs(totalesCliente.saldo * tasaValor)}</div>}
+              <div style={{ fontSize: '1.3rem', fontWeight: 900, color: '#6366F1' }}>{formatMonto(totalesCliente.saldo)}</div>
+              {tasaValor > 0 && <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Ref. {formatDolares(totalesCliente.saldo)}</div>}
             </div>
           </div>
 
@@ -182,14 +182,14 @@ export default function CxCClientStatement({ cuentas = [], tasaValor = 0 }) {
                       <td><code>{c.numero_factura}</code></td>
                       <td>{formatFecha(c.fecha_emision, false)}</td>
                       <td style={{ textAlign: 'center', fontWeight: 700 }}>{c.diasTranscurridos} d</td>
-                      <td style={{ textAlign: 'right' }}>{formatUSD(c.montoOriginalUSD)}</td>
+                      <td style={{ textAlign: 'right' }}>{formatMonto(c.montoOriginalUSD)}</td>
                       <td style={{ textAlign: 'right', color: c.recargoUSD > 0 ? '#EF4444' : 'inherit' }}>
-                        {c.recargoUSD > 0 ? `+${formatUSD(c.recargoUSD)}` : '—'}
+                        {c.recargoUSD > 0 ? `+${formatMonto(c.recargoUSD)}` : '—'}
                       </td>
                       <td style={{ textAlign: 'right', color: '#10B981' }}>
-                        {c.totalAbonadoUSD > 0 ? formatUSD(c.totalAbonadoUSD) : '—'}
+                        {c.totalAbonadoUSD > 0 ? formatMonto(c.totalAbonadoUSD) : '—'}
                       </td>
-                      <td style={{ textAlign: 'right', fontWeight: 800 }}>{formatUSD(c.saldoTotalUSD)}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 800 }}>{formatMonto(c.saldoTotalUSD)}</td>
                       <td style={{ textAlign: 'center' }}>
                         {c.saldoTotalUSD === 0 ? (
                           <span className="badge badge--success">Solvente</span>
@@ -218,7 +218,7 @@ export default function CxCClientStatement({ cuentas = [], tasaValor = 0 }) {
                                 }}
                               >
                                 <span>📅 {formatFecha(a.fecha, false)}</span> |{' '}
-                                <strong style={{ color: '#10B981' }}>{formatUSD(a.monto_usd)}</strong> ({a.metodo})
+                                <strong style={{ color: '#10B981' }}>{formatBs(a.monto_bs)}</strong> ({a.metodo})
                                 {a.notas && <em> — "{a.notas}"</em>}
                               </div>
                             ))}
