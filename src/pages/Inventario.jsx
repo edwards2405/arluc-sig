@@ -1,17 +1,34 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { formatMonto, formatFecha } from '../utils/formatters';
+import { formatMonto } from '../utils/formatters';
 import toast from 'react-hot-toast';
 import Pagination from '../components/common/Pagination';
 import {
   HiOutlinePlus, HiOutlinePencilSquare, HiOutlineTrash,
-  HiOutlineMagnifyingGlass, HiOutlineFunnel, HiOutlineTag, HiOutlineDocumentChartBar,
+  HiOutlineMagnifyingGlass, HiOutlineTag, HiOutlineDocumentChartBar,
 } from 'react-icons/hi2';
 import ConfirmModal from '../components/common/ConfirmModal';
 import ModalImprimirEtiquetas from '../components/print/ModalImprimirEtiquetas';
+import { useDialogo } from '../components/common/DialogoProvider';
+import { tieneTexto, validarMonto } from '../utils/validaciones';
+import { useAuth } from '../contexts/AuthContext';
+import { puede } from '../utils/permisos';
+import { mensajeError, exigirFilas } from '../utils/errores';
+
+/** SKU normalizado: mayúsculas y sin espacios. */
+const normalizarSku = (valor) => String(valor ?? '').toUpperCase().replace(/\s+/g, '');
+/** Clave para comparar nombres sin distinguir mayúsculas ni espacios sobrantes. */
+const claveTexto = (valor) => String(valor ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 
 export default function Inventario() {
+  const { confirmar } = useDialogo();
+  const { profile } = useAuth();
+  const rol = profile?.rol;
+  const puedeEditarProducto = puede(rol, 'producto.editar');
+  const puedeEditarCategoria = puede(rol, 'categoria.editar');
+  const puedeExento = puede(rol, 'producto.exento');
+  const [errores, setErrores] = useState({});
   const [productos, setProductos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -25,7 +42,7 @@ export default function Inventario() {
   const [editando, setEditando] = useState(null);
   const [catEditando, setCatEditando] = useState(null);
   const [form, setForm] = useState({
-    sku: '', nombre: '', descripcion: '', precio_usd: '', stock: '', stock_minimo: '5', categoria_id: '', activo: true
+    sku: '', nombre: '', descripcion: '', precio_usd: '', costo_usd: '', stock: '', stock_minimo: '5', categoria_id: '', exento_iva: false, activo: true
   });
   const [catForm, setCatForm] = useState({ nombre: '', descripcion: '' });
   const [prodToDelete, setProdToDelete] = useState(null);
@@ -40,6 +57,8 @@ export default function Inventario() {
       supabase.from('productos').select('*, categorias(nombre)').order('nombre'),
       supabase.from('categorias').select('*').order('nombre'),
     ]);
+    if (prodRes.error) toast.error(mensajeError(prodRes.error, 'No se pudieron cargar los productos'));
+    if (catRes.error) toast.error(mensajeError(catRes.error, 'No se pudieron cargar las categorías'));
     setProductos(prodRes.data || []);
     setCategorias(catRes.data || []);
     setLoading(false);
@@ -47,21 +66,56 @@ export default function Inventario() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    const sku = normalizarSku(form.sku);
+    const precio = Number(String(form.precio_usd).replace(',', '.'));
+    const costo = tieneTexto(form.costo_usd) ? Number(String(form.costo_usd).replace(',', '.')) : 0;
+    const stock = Number(form.stock);
+    const stockMinimo = Number(form.stock_minimo);
+
+    const errs = {};
+    if (!sku) errs.sku = 'El SKU es obligatorio';
+    else if (productos.some(p => p.id !== editando?.id && normalizarSku(p.sku) === sku)) errs.sku = `Ya existe un producto con el SKU ${sku}`;
+    if (!tieneTexto(form.nombre)) errs.nombre = 'El nombre es obligatorio';
+    const errPrecio = validarMonto(form.precio_usd, { etiqueta: 'El precio', min: 0 });
+    if (errPrecio) errs.precio_usd = errPrecio;
+    const errCosto = tieneTexto(form.costo_usd) ? validarMonto(form.costo_usd, { etiqueta: 'El costo', min: 0, mayorQue: false }) : null;
+    if (errCosto) errs.costo_usd = errCosto;
+    if (!Number.isInteger(stock) || stock < 0) errs.stock = 'El stock debe ser un número entero mayor o igual a 0';
+    if (!Number.isInteger(stockMinimo) || stockMinimo < 0) errs.stock_minimo = 'El stock mínimo debe ser un número entero mayor o igual a 0';
+    if (!errCosto && !errs.stock && stock > 0 && !(costo > 0)) {
+      errs.costo_usd = 'Si el producto tiene stock, el costo debe ser mayor que 0';
+    }
+    setErrores(errs);
+    if (Object.keys(errs).length) return;
+
+    if (costo > 0 && precio < costo) {
+      const seguir = await confirmar({
+        titulo: 'Precio por debajo del costo',
+        mensaje: `El precio (${precio.toFixed(2)} USD) es menor que el costo (${costo.toFixed(2)} USD): cada venta dará pérdida. ¿Desea guardarlo así?`,
+        variante: 'warning',
+        textoConfirmar: 'Sí, guardar',
+      });
+      if (!seguir) return;
+    }
+
     const payload = {
-      sku: form.sku,
-      nombre: form.nombre,
-      descripcion: form.descripcion,
-      precio_usd: parseFloat(form.precio_usd),
-      stock: parseInt(form.stock),
-      stock_minimo: parseInt(form.stock_minimo),
+      sku,
+      nombre: form.nombre.trim(),
+      descripcion: form.descripcion.trim() || null,
+      precio_usd: precio,
+      costo_usd: costo,
+      stock,
+      stock_minimo: stockMinimo,
       categoria_id: form.categoria_id || null,
+      exento_iva: !!form.exento_iva,
       activo: form.activo,
     };
 
     try {
       if (editando) {
-        const { error } = await supabase.from('productos').update(payload).eq('id', editando.id);
+        const { data, error } = await supabase.from('productos').update(payload).eq('id', editando.id).select('id');
         if (error) throw error;
+        exigirFilas(data);
         toast.success('Producto actualizado');
       } else {
         const { error } = await supabase.from('productos').insert(payload);
@@ -73,7 +127,7 @@ export default function Inventario() {
       resetForm();
       loadData();
     } catch (error) {
-      toast.error(error.message || 'Error al guardar');
+      toast.error(mensajeError(error, 'Error al guardar'));
     }
   }
 
@@ -81,19 +135,21 @@ export default function Inventario() {
     if (!prodToDelete) return;
     setDeleting(true);
     try {
-      const { error } = await supabase.from('productos').delete().eq('id', prodToDelete.id);
+      const { data, error } = await supabase.from('productos').delete().eq('id', prodToDelete.id).select('id');
       if (error) {
         // Fallback defensivo a desactivación si tiene dependencias críticas
-        const { error: updateError } = await supabase.from('productos').update({ activo: false }).eq('id', prodToDelete.id);
+        const { data: desactivado, error: updateError } = await supabase.from('productos').update({ activo: false }).eq('id', prodToDelete.id).select('id');
         if (updateError) throw updateError;
+        exigirFilas(desactivado);
         toast.success(`Producto marcado como INACTIVO debido a dependencias en base de datos.`);
       } else {
+        exigirFilas(data);
         toast.success(`Producto "${prodToDelete.nombre}" eliminado`);
       }
       setProdToDelete(null);
       loadData();
     } catch (err) {
-      toast.error(err.message || 'Error al eliminar producto');
+      toast.error(mensajeError(err, 'Error al eliminar producto'));
     } finally {
       setDeleting(false);
     }
@@ -101,17 +157,21 @@ export default function Inventario() {
 
   async function handleCatSubmit(e) {
     e.preventDefault();
-    if (!catForm.nombre?.trim()) return;
+    const nombre = String(catForm.nombre ?? '').trim().replace(/\s+/g, ' ');
+    if (!nombre) { toast.error('El nombre de la categoría es obligatorio'); return; }
+    if (categorias.some(c => c.id !== catEditando?.id && claveTexto(c.nombre) === claveTexto(nombre))) {
+      toast.error(`Ya existe la categoría "${nombre}"`);
+      return;
+    }
+    const catPayload = { nombre, descripcion: String(catForm.descripcion ?? '').trim() || null };
     try {
       if (catEditando) {
-        const { error } = await supabase.from('categorias').update({
-          nombre: catForm.nombre,
-          descripcion: catForm.descripcion,
-        }).eq('id', catEditando.id);
+        const { data, error } = await supabase.from('categorias').update(catPayload).eq('id', catEditando.id).select('id');
         if (error) throw error;
+        exigirFilas(data);
         toast.success('Categoría actualizada');
       } else {
-        const { error } = await supabase.from('categorias').insert(catForm);
+        const { error } = await supabase.from('categorias').insert(catPayload);
         if (error) throw error;
         toast.success('Categoría creada');
       }
@@ -119,7 +179,7 @@ export default function Inventario() {
       setCatForm({ nombre: '', descripcion: '' });
       loadData();
     } catch (error) {
-      toast.error(error.message || 'Error al guardar categoría');
+      toast.error(mensajeError(error, 'Error al guardar categoría'));
     }
   }
 
@@ -127,9 +187,11 @@ export default function Inventario() {
     if (!catToDelete) return;
     setDeleting(true);
     try {
-      await supabase.from('productos').update({ categoria_id: null }).eq('categoria_id', catToDelete.id);
-      const { error } = await supabase.from('categorias').delete().eq('id', catToDelete.id);
+      const { error: errorProductos } = await supabase.from('productos').update({ categoria_id: null }).eq('categoria_id', catToDelete.id);
+      if (errorProductos) throw errorProductos;
+      const { data, error } = await supabase.from('categorias').delete().eq('id', catToDelete.id).select('id');
       if (error) throw error;
+      exigirFilas(data);
       toast.success(`Categoría "${catToDelete.nombre}" eliminada`);
       if (catEditando?.id === catToDelete.id) {
         setCatEditando(null);
@@ -138,7 +200,7 @@ export default function Inventario() {
       setCatToDelete(null);
       loadData();
     } catch (error) {
-      toast.error(error.message || 'Error al eliminar categoría');
+      toast.error(mensajeError(error, 'Error al eliminar categoría'));
     } finally {
       setDeleting(false);
     }
@@ -146,19 +208,22 @@ export default function Inventario() {
 
   function editarProducto(producto) {
     setEditando(producto);
+    setErrores({});
     setForm({
       sku: producto.sku, nombre: producto.nombre, descripcion: producto.descripcion || '',
-      precio_usd: producto.precio_usd.toString(), stock: producto.stock.toString(),
+      precio_usd: producto.precio_usd.toString(), costo_usd: String(producto.costo_usd ?? 0),
+      stock: producto.stock.toString(),
       stock_minimo: producto.stock_minimo.toString(), categoria_id: producto.categoria_id || '',
-      activo: producto.activo,
+      exento_iva: !!producto.exento_iva, activo: producto.activo,
     });
     setShowModal(true);
   }
 
   function resetForm() {
+    setErrores({});
     setForm({
-      sku: '', nombre: '', descripcion: '', precio_usd: '', stock: '', stock_minimo: '5',
-      categoria_id: '', activo: true
+      sku: '', nombre: '', descripcion: '', precio_usd: '', costo_usd: '', stock: '', stock_minimo: '5',
+      categoria_id: '', exento_iva: false, activo: true
     });
   }
 
@@ -199,12 +264,16 @@ export default function Inventario() {
           <button className="btn btn--secondary" onClick={() => abrirModalEtiquetas(null)}>
             <HiOutlineTag /> Imprimir Etiquetas
           </button>
-          <button className="btn btn--secondary" onClick={() => { setCatEditando(null); setCatForm({ nombre: '', descripcion: '' }); setShowCatModal(true); }}>
-            <HiOutlinePlus /> Categorías
-          </button>
-          <button className="btn btn--primary" onClick={() => { setEditando(null); resetForm(); setShowModal(true); }}>
-            <HiOutlinePlus /> Nuevo Producto
-          </button>
+          {puedeEditarCategoria && (
+            <button className="btn btn--secondary" onClick={() => { setCatEditando(null); setCatForm({ nombre: '', descripcion: '' }); setShowCatModal(true); }}>
+              <HiOutlinePlus /> Categorías
+            </button>
+          )}
+          {puedeEditarProducto && (
+            <button className="btn btn--primary" onClick={() => { setEditando(null); resetForm(); setShowModal(true); }}>
+              <HiOutlinePlus /> Nuevo Producto
+            </button>
+          )}
         </div>
       </div>
 
@@ -266,12 +335,16 @@ export default function Inventario() {
                       >
                         <HiOutlineTag />
                       </button>
-                      <button className="btn btn--ghost btn--xs" onClick={() => editarProducto(p)} title="Editar">
-                        <HiOutlinePencilSquare />
-                      </button>
-                      <button className="btn btn--ghost btn--xs text-danger" onClick={() => setProdToDelete(p)} title="Eliminar Producto">
-                        <HiOutlineTrash />
-                      </button>
+                      {puedeEditarProducto && (
+                        <>
+                          <button className="btn btn--ghost btn--xs" onClick={() => editarProducto(p)} title="Editar">
+                            <HiOutlinePencilSquare />
+                          </button>
+                          <button className="btn btn--ghost btn--xs text-danger" onClick={() => setProdToDelete(p)} title="Eliminar Producto">
+                            <HiOutlineTrash />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -306,9 +379,11 @@ export default function Inventario() {
                     type="text"
                     value={form.sku}
                     onChange={e => setForm({...form, sku: e.target.value})}
+                    onBlur={() => setForm(f => ({ ...f, sku: normalizarSku(f.sku) }))}
                     placeholder="Ej. PROD-001"
                     required
                   />
+                  {errores.sku && <small style={{ color: '#ef4444' }}>{errores.sku}</small>}
                 </div>
                 <div className="form-group">
                   <label>Nombre del Producto</label>
@@ -319,6 +394,7 @@ export default function Inventario() {
                     placeholder="Ej. Altavoz Bluetooth 15''"
                     required
                   />
+                  {errores.nombre && <small style={{ color: '#ef4444' }}>{errores.nombre}</small>}
                 </div>
               </div>
               <div className="form-group">
@@ -336,33 +412,55 @@ export default function Inventario() {
                   <input
                     type="number"
                     step="0.01"
-                    min="0"
+                    min="0.01"
                     value={form.precio_usd}
                     onChange={e => setForm({...form, precio_usd: e.target.value})}
                     placeholder="0.00"
                     required
                   />
                   {Number(form.precio_usd) > 0 && <small>≈ {formatMonto(form.precio_usd)}</small>}
+                  {errores.precio_usd && <small style={{ color: '#ef4444' }}>{errores.precio_usd}</small>}
                 </div>
                 <div className="form-group">
-                  <label>Stock Actual</label>
+                  <label>Costo (USD)</label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    min="0"
+                    value={form.costo_usd}
+                    onChange={e => setForm({...form, costo_usd: e.target.value})}
+                    placeholder="0.00"
+                    disabled={!!editando}
+                  />
+                  {Number(form.costo_usd) > 0 && <small>≈ {formatMonto(form.costo_usd)}</small>}
+                  {editando && <small style={{ color: 'var(--text-secondary)' }}>El costo promedio lo actualizan las compras; no se edita aquí.</small>}
+                  {errores.costo_usd && <small style={{ color: '#ef4444' }}>{errores.costo_usd}</small>}
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>{editando ? 'Stock Actual' : 'Stock Inicial'}</label>
                   <input
                     type="number"
                     min="0"
+                    step="1"
                     value={form.stock}
                     onChange={e => setForm({...form, stock: e.target.value})}
                     required
                   />
+                  {errores.stock && <small style={{ color: '#ef4444' }}>{errores.stock}</small>}
                 </div>
                 <div className="form-group">
                   <label>Stock Mínimo (Alerta)</label>
                   <input
                     type="number"
                     min="0"
+                    step="1"
                     value={form.stock_minimo}
                     onChange={e => setForm({...form, stock_minimo: e.target.value})}
                     required
                   />
+                  {errores.stock_minimo && <small style={{ color: '#ef4444' }}>{errores.stock_minimo}</small>}
                 </div>
               </div>
 
@@ -379,6 +477,11 @@ export default function Inventario() {
                     <input type="checkbox" checked={form.activo} onChange={e => setForm({...form, activo: e.target.checked})} />
                     Producto activo
                   </label>
+                  <label className="checkbox-label">
+                    <input type="checkbox" checked={form.exento_iva} disabled={!puedeExento} onChange={e => setForm({...form, exento_iva: e.target.checked})} />
+                    Exento de IVA
+                  </label>
+                  {!puedeExento && <small style={{ color: 'var(--text-secondary)' }}>Solo el administrador cambia la exención de IVA.</small>}
                 </div>
               </div>
               <button type="submit" className="btn btn--primary btn--full">{editando ? 'Guardar Cambios' : 'Crear Producto'}</button>

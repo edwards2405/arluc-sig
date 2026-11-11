@@ -2,6 +2,12 @@ import React, { useState } from 'react';
 import { HiOutlineBanknotes, HiOutlineTrash, HiOutlineCheck } from 'react-icons/hi2';
 import { formatMonto, formatDolares, formatBs, formatFecha } from '../../utils/formatters';
 import toast from 'react-hot-toast';
+import { validarReferencia } from '../../utils/validaciones';
+import { METODOS_PAGO } from '../../utils/constants';
+import { mensajeError } from '../../utils/errores';
+
+// Métodos bancarios: exigen número de referencia.
+const METODOS_CON_REFERENCIA = ['pago_movil', 'punto_venta', 'zelle', 'transferencia'];
 
 // Tasa a la que se cobró el abono: monto_bs incluye el IGTF.
 const tasaDelAbono = (a) => a.monto_bs / (a.monto_usd + a.igtf_usd);
@@ -17,6 +23,7 @@ export default function CxCAbonoModal({
   const [form, setForm] = useState({
     monto_usd: '',
     metodo: 'efectivo_usd',
+    referencia: '',
     notas: '',
   });
   const [loading, setLoading] = useState(false);
@@ -37,18 +44,27 @@ export default function CxCAbonoModal({
       toast.error(`El monto supera el saldo deudor pendiente (${formatMonto(saldoActualUSD)} · Ref. ${formatDolares(saldoActualUSD)})`);
       return;
     }
+    const requiereReferencia = METODOS_CON_REFERENCIA.includes(form.metodo);
+    if (requiereReferencia) {
+      const errorRef = validarReferencia(form.referencia);
+      if (errorRef) {
+        toast.error(errorRef);
+        return;
+      }
+    }
 
     setLoading(true);
     try {
       await onRegistrarAbono(cuenta.id, {
         monto_usd: monto,
         metodo: form.metodo,
+        referencia: requiereReferencia ? form.referencia.trim() : null,
         notas: form.notas.trim(),
       });
       toast.success('Abono registrado exitosamente');
-      setForm({ monto_usd: '', metodo: 'efectivo_usd', notas: '' });
+      setForm({ monto_usd: '', metodo: 'efectivo_usd', referencia: '', notas: '' });
     } catch (err) {
-      toast.error('Error al guardar abono: ' + err.message);
+      toast.error(mensajeError(err));
     } finally {
       setLoading(false);
     }
@@ -127,7 +143,11 @@ export default function CxCAbonoModal({
           </div>
 
           {/* Formulario de registro de abono */}
-          {saldoActualUSD > 0 ? (
+          {saldoActualUSD > 0 && !onRegistrarAbono ? (
+            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+              Su rol puede consultar la cuenta, pero no registrar abonos.
+            </p>
+          ) : saldoActualUSD > 0 ? (
             <form onSubmit={handleSubmit} style={{ background: 'rgba(0,0,0,0.05)', padding: '1rem', borderRadius: '8px' }}>
               <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '0.9rem', color: 'var(--text-primary)' }}>
                 Registrar Nuevo Abono / Pago
@@ -161,15 +181,29 @@ export default function CxCAbonoModal({
                     <option value="transferencia">Transferencia</option>
                   </select>
                 </div>
+
+                {METODOS_CON_REFERENCIA.includes(form.metodo) && (
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ fontSize: '0.75rem' }}>Referencia *</label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={30}
+                      value={form.referencia}
+                      onChange={(e) => setForm({ ...form, referencia: e.target.value })}
+                      placeholder="Ej. 004812"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="form-group" style={{ marginTop: '0.75rem', marginBottom: '0.75rem' }}>
-                <label style={{ fontSize: '0.75rem' }}>Referencia o Notas del Pago</label>
+                <label style={{ fontSize: '0.75rem' }}>Notas del Pago</label>
                 <input
                   type="text"
                   value={form.notas}
                   onChange={(e) => setForm({ ...form, notas: e.target.value })}
-                  placeholder="Ej. Ref #4812 o Comprobante"
+                  placeholder="Observaciones (opcional)"
                 />
               </div>
 
@@ -231,7 +265,7 @@ export default function CxCAbonoModal({
                     <div>
                       <div style={{ fontWeight: 600, color: '#10B981' }}>+{formatBs(a.monto_bs)}</div>
                       <div style={{ color: 'var(--text-secondary)', fontSize: '0.72rem' }}>
-                        {formatFecha(a.fecha, true)} • {a.metodo?.toUpperCase()} {a.notas ? `(${a.notas})` : ''}
+                        {formatFecha(a.fecha, true)} • {METODOS_PAGO.find((m) => m.id === a.metodo)?.label || a.metodo} {a.referencia ? `Ref. ${a.referencia}` : ''} {a.notas ? `(${a.notas})` : ''}
                       </div>
                       <div style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>
                         Capital {formatMonto(a.aplicado_capital_usd, tasaDelAbono(a))}
@@ -241,14 +275,16 @@ export default function CxCAbonoModal({
                           ` · Dif. cambiario ${a.diferencial_bs > 0 ? '+' : ''}${a.diferencial_bs.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs`}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn--ghost btn--xs text-danger"
-                      onClick={() => onEliminarAbono(cuenta.id, a.id)}
-                      title="Anular este abono (requiere admin o gerente)"
-                    >
-                      <HiOutlineTrash />
-                    </button>
+                    {onEliminarAbono && (
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--xs text-danger"
+                        onClick={() => onEliminarAbono(cuenta.id, a.id)}
+                        title="Anular este abono"
+                      >
+                        <HiOutlineTrash />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

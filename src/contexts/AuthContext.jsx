@@ -131,12 +131,24 @@ export function AuthProvider({ children }) {
       throw new Error(data.error_description || data.msg || data.error || 'Error al crear usuario');
     }
 
-    const nuevoId = data.user?.id ?? data.id;
-    const { error: perfilError } = await supabase
+    // Si el correo ya existe, Supabase puede responder 200 con un usuario
+    // ficticio (sin identidades): no hay cuenta nueva aunque no haya error.
+    const nuevoUsuario = data.user ?? data;
+    const nuevoId = nuevoUsuario?.id;
+    const esUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(nuevoId ?? ''));
+    if (!esUuid || (Array.isArray(nuevoUsuario.identities) && nuevoUsuario.identities.length === 0)) {
+      throw new Error('No se creó el usuario: el correo ya está registrado o el servidor no devolvió la cuenta nueva.');
+    }
+
+    const { data: filas, error: perfilError } = await supabase
       .from('usuarios')
       .update({ rol, activo: true })
-      .eq('id', nuevoId);
+      .eq('id', nuevoId)
+      .select('id');
     if (perfilError) throw perfilError;
+    if (!filas?.length) {
+      throw new Error('La cuenta se registró, pero no se pudo asignar el rol ni activarla (no se encontró su perfil). Revise la lista y asígnelo manualmente.');
+    }
 
     return data;
   }

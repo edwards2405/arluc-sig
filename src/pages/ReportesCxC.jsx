@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
+import { mensajeError } from '../utils/errores';
 import { DEFAULT_CXC_CONFIG, fetchCxCConfig, fetchCuentasPorCobrar } from '../services/cuentasCobrarService';
 
 import CxCAgingReport from '../components/cxc/reportes/CxCAgingReport';
@@ -13,7 +15,6 @@ import { exportarCxCExcel } from '../components/cxc/reportes/cxcReportExport';
 import { imprimirCon } from '../utils/xlsxFormateado';
 
 import {
-  HiOutlineCreditCard,
   HiOutlineArrowLeft,
   HiOutlineArrowDownTray,
   HiOutlineArrowPath,
@@ -41,16 +42,18 @@ export default function ReportesCxC() {
   async function cargarDatos() {
     setLoading(true);
     try {
-      const [cuentasData, cfg, { data: tasaData }] = await Promise.all([
+      const [cuentasData, cfg, { data: tasaData, error: errorTasa }] = await Promise.all([
         fetchCuentasPorCobrar(),
         fetchCxCConfig(),
-        supabase.from('tasas_cambio').select('*').order('fecha_registro', { ascending: false }).limit(1).maybeSingle(),
+        supabase.rpc('tasa_vigente'),
       ]);
       setCuentas(cuentasData);
       setConfig(cfg);
-      if (tasaData) setTasaHoy(tasaData);
+      if (errorTasa) toast.error('No se pudo obtener la tasa vigente: ' + mensajeError(errorTasa));
+      setTasaHoy(Number(tasaData) || null);
     } catch (e) {
       console.error('Error cargando datos para reportes de CxC:', e);
+      toast.error('Error cargando los reportes de CxC: ' + mensajeError(e));
     } finally {
       setLoading(false);
     }
@@ -72,7 +75,7 @@ export default function ReportesCxC() {
     return lista;
   }, [cuentas]);
 
-  const tasaValor = tasaHoy?.tasa_usd_bs || 0;
+  const tasaValor = tasaHoy || 0;
 
   function handleExportarExcel() {
     exportarCxCExcel({ cuentas, abonosHistorico, config, tasaValor });

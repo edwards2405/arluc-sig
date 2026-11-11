@@ -10,6 +10,7 @@
 
 import { supabase } from '../lib/supabase';
 import { formatMonto } from '../utils/formatters';
+import { exigirFilas } from '../utils/errores';
 
 const PAGE_SIZE = 1000;
 
@@ -42,15 +43,17 @@ export async function fetchCxCConfig() {
  * el porcentaje se usa al fijar el recargo de las cuentas vencidas).
  */
 export async function saveCxCConfig(cfg) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('configuracion_empresa')
     .update({
       dias_credito: parseInt(cfg.diasGracia, 10),
       porcentaje_recargo_mora: parseFloat(cfg.porcentajeRecargo),
       aplicar_recargo_mora: !!cfg.aplicarRecargoAutomatico,
     })
-    .eq('id', 'default');
+    .eq('id', 'default')
+    .select('id');
   if (error) throw error;
+  exigirFilas(data, 'No tiene permiso para cambiar la política de crédito.');
   return fetchCxCConfig();
 }
 

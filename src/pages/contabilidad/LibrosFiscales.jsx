@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
+import { useDialogo } from '../../components/common/DialogoProvider';
 import { exportarExcel, imprimirReporte } from '../../utils/reportes';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -70,6 +71,7 @@ function imprimirComprobante(r) {
 }
 
 export default function LibrosFiscales() {
+  const { confirmar, pedirTexto } = useDialogo();
   const { profile } = useAuth();
   const puedeOperar = ['admin', 'contador'].includes(profile?.rol);
   const [periodo, setPeriodo] = useState(mesActual);
@@ -187,17 +189,23 @@ export default function LibrosFiscales() {
   const imprimir = (tipo) => imprimirReporte(tipo === 'resumen' ? construirResumen() : construirLibro(tipo));
 
   async function registrarComprobante(r) {
-    const numero = window.prompt(`Comprobante de retención entregado por ${r.tercero_nombre} (14 dígitos: AAAAMM + 8):`,
-      `${anio}${String(mes).padStart(2, '0')}`);
+    const numero = await pedirTexto({
+      titulo: 'Registrar comprobante de retención',
+      mensaje: `Comprobante entregado por ${r.tercero_nombre}.`,
+      etiqueta: 'N° de comprobante', inicial: `${anio}${String(mes).padStart(2, '0')}`,
+      patron: /^\d{14}$/, mensajePatron: 'Debe tener 14 dígitos: AAAAMM + 8',
+      ayuda: '14 dígitos: año y mes (AAAAMM) más 8 dígitos',
+      textoConfirmar: 'Registrar',
+    });
     if (!numero) return;
-    const { error } = await supabase.rpc('registrar_comprobante_recibido', { p_retencion_id: r.id, p_numero: numero.trim() });
+    const { error } = await supabase.rpc('registrar_comprobante_recibido', { p_retencion_id: r.id, p_numero: numero });
     if (error) { toast.error(error.message); return; }
     toast.success('Comprobante registrado: la retención ya se puede descontar en la declaración');
     cargar();
   }
 
   async function enterar(quincena) {
-    if (!window.confirm(`¿Registrar el pago al SENIAT de las retenciones de la ${quincena === 1 ? '1ra' : '2da'} quincena ${String(mes).padStart(2, '0')}/${anio}?`)) return;
+    if (!(await confirmar({ titulo: 'Enterar retenciones', mensaje: `¿Registrar el pago al SENIAT de las retenciones de la ${quincena === 1 ? '1ra' : '2da'} quincena ${String(mes).padStart(2, '0')}/${anio}?`, textoConfirmar: 'Registrar pago' }))) return;
     const { data, error } = await supabase.rpc('enterar_retenciones_iva', { p_anio: anio, p_mes: mes, p_quincena: quincena });
     if (error) { toast.error(error.message); return; }
     const dif = Number(data.diferencial_usd);

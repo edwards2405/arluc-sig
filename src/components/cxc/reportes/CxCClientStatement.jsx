@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { formatMonto, formatDolares, formatBs, formatFecha, getWhatsAppUrl, getPhoneCallUrl } from '../../../utils/formatters';
-import { HiOutlineUser, HiOutlinePhone, HiOutlineDocumentText, HiOutlinePrinter } from 'react-icons/hi2';
+import { HiOutlinePrinter } from 'react-icons/hi2';
 import { FaWhatsapp, FaPhone } from 'react-icons/fa';
 
 export default function CxCClientStatement({ cuentas = [], tasaValor = 0 }) {

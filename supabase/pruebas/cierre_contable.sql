@@ -40,7 +40,8 @@ select (select ves from pg_temp.saldo('1.1.01.02', (:'fin_ant'::date + 1)))
      - (select ves from pg_temp.saldo('1.1.01.02', :'fin_ant')) as cambio_bs_por_reverso;
 
 \echo '=== 3. No se registran operaciones en un mes cerrado (debe fallar)'
-select interno.emitir_factura((select id from usuarios where email = 'vendedor@arluc.test'), null,
+select interno.emitir_factura((select id from usuarios where email = 'vendedor@arluc.test'),
+  (select id from clientes where documento_identidad = 'V-17654321'),
   jsonb_build_array(jsonb_build_object('producto_id', (select id from productos where sku = 'CAB-001'), 'cantidad', 1)),
   '[{"metodo_id":"efectivo_bs","monto_usd":14.50}]', false, (:'fin_ant'::date - 2)::timestamptz + interval '12 hours');
 
@@ -62,6 +63,8 @@ reset role;
 select round(s.usd * public.tasa_vigente(:'fin_ant'), 2) = s.ves as revaluada_de_nuevo from pg_temp.saldo('1.1.01.02', :'fin_ant') s;
 
 \echo '=== 6. Cierre del ejercicio (ejercicio económico que termina en el mes cerrado)'
+-- El mes de cierre es un dato fiscal: solo lo cambia un administrador.
+select pg_temp.como('admin@arluc.test');
 update configuracion_empresa set mes_cierre_ejercicio = :mes_ant;
 select pg_temp.como('contador@arluc.test');
 select jsonb_pretty(cerrar_ejercicio(:anio_ant));

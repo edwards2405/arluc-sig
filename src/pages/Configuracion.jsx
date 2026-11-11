@@ -3,6 +3,12 @@ import { supabase } from '../lib/supabase';
 import { getEmpresaConfig, saveEmpresaConfig, DEFAULT_EMPRESA } from '../utils/constants';
 import { useTheme } from '../contexts/ThemeContext';
 import toast from 'react-hot-toast';
+import { useDialogo } from '../components/common/DialogoProvider';
+import { CampoDocumento, CampoTelefono, CODIGOS_CELULAR, CODIGOS_FIJOS } from '../components/common/CamposVenezuela';
+import { tieneTexto, normalizarDocumento, validarDocumento, normalizarTelefono, validarTelefono } from '../utils/validaciones';
+import { useAuth } from '../contexts/AuthContext';
+import { puede } from '../utils/permisos';
+import { mensajeError, exigirFilas } from '../utils/errores';
 import {
   HiOutlineBuildingOffice2,
   HiOutlineIdentification,
@@ -17,10 +23,15 @@ import {
 } from 'react-icons/hi2';
 
 export default function Configuracion() {
+  const { confirmar } = useDialogo();
   const { theme, setTheme } = useTheme();
+  const { profile } = useAuth();
+  // Razón social y RIF solo los cambia el administrador (la BD lo valida)
+  const puedeFiscal = puede(profile?.rol, 'empresa.fiscal');
   const [config, setConfig] = useState(() => getEmpresaConfig());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [errores, setErrores] = useState({});
 
   useEffect(() => {
     loadConfig();
@@ -63,64 +74,63 @@ export default function Configuracion() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    const errs = {};
+    if (!tieneTexto(config.nombre)) errs.nombre = 'La razón social es obligatoria';
+    const errRif = validarDocumento(config.rif, { soloRif: true });
+    if (errRif) errs.rif = errRif;
+    if (!tieneTexto(config.direccion)) errs.direccion = 'La dirección fiscal es obligatoria';
+    const errTel = validarTelefono(config.telefono);
+    if (errTel) errs.telefono = errTel;
+    setErrores(errs);
+    if (Object.keys(errs).length) return;
+
     setSaving(true);
     try {
       const payload = {
-        nombre: (config.nombre || '').trim(),
-        rif: (config.rif || '').trim(),
-        direccion: (config.direccion || '').trim(),
-        telefono: (config.telefono || '').trim(),
+        nombre: config.nombre.trim().replace(/\s+/g, ' '),
+        rif: normalizarDocumento(config.rif),
+        direccion: config.direccion.trim(),
+        telefono: tieneTexto(config.telefono) ? normalizarTelefono(config.telefono) : '',
         logo: config.logo || DEFAULT_EMPRESA.logo,
         slogan: (config.slogan || '').trim(),
       };
 
-      // Guardar en localStorage inmediatamente
-      saveEmpresaConfig(payload);
-      setConfig(payload);
+      // Sin permiso fiscal no se envían razón social ni RIF (el trigger los rechaza)
+      const { nombre: _nombre, rif: _rif, ...noFiscales } = payload;
+      const cambios = puedeFiscal ? payload : noFiscales;
 
-      // Guardar en Supabase para persistencia global
-      const { error } = await supabase
+      // Guardar primero en la BD; el caché local solo se actualiza si la BD confirma.
+      // update (no upsert): el upsert exige permiso de INSERT, que solo tiene el administrador.
+      const { data, error } = await supabase
         .from('configuracion_empresa')
-        .upsert({
-          id: 'default',
-          ...payload,
-          updated_at: new Date().toISOString(),
-        });
+        .update(cambios)
+        .eq('id', 'default')
+        .select('id');
 
       if (error) throw error;
+      exigirFilas(data, 'La base de datos no confirmó el cambio (¿permisos insuficientes?).');
 
+      saveEmpresaConfig(payload);
+      setConfig(payload);
       toast.success('Configuración de empresa guardada con éxito');
     } catch (error) {
       console.error('Error guardando configuración:', error);
-      toast.error('Error al guardar configuración: ' + (error.message || 'Error de conexión'));
+      toast.error('Error al guardar configuración: ' + mensajeError(error, 'Error de conexión'));
     } finally {
       setSaving(false);
     }
   }
 
   async function handleReset() {
-    if (!confirm('¿Restablecer datos predeterminados?')) return;
-    setSaving(true);
-    try {
-      saveEmpresaConfig(DEFAULT_EMPRESA);
-      setConfig(DEFAULT_EMPRESA);
-
-      const { error } = await supabase
-        .from('configuracion_empresa')
-        .upsert({
-          id: 'default',
-          ...DEFAULT_EMPRESA,
-          updated_at: new Date().toISOString(),
-        });
-
-      if (error) throw error;
-      toast.success('Valores por defecto restablecidos');
-    } catch (error) {
-      console.error('Error restableciendo configuración:', error);
-      toast.error('Error al restablecer: ' + error.message);
-    } finally {
-      setSaving(false);
-    }
+    // No escribe nada en la BD: descarta los cambios del formulario y vuelve a los datos guardados
+    if (!(await confirmar({
+      titulo: 'Restablecer datos',
+      mensaje: '¿Descartar los cambios no guardados y volver a los datos registrados en la base de datos?',
+      textoConfirmar: 'Restablecer',
+    }))) return;
+    setErrores({});
+    await loadConfig();
+    toast.success('Se restablecieron los datos guardados');
   }
 
   return (
@@ -261,20 +271,28 @@ export default function Configuracion() {
                   onChange={e => handleChange('nombre', e.target.value)}
                   placeholder="Ej. COMERCIALIZADORA ARLUC C.A."
                   required
+                  disabled={!puedeFiscal}
                 />
+                {errores.nombre && <small style={{ color: '#ef4444' }}>{errores.nombre}</small>}
+                {!puedeFiscal && <small style={{ color: 'var(--text-secondary)' }}>Solo el administrador cambia la razón social.</small>}
               </div>
 
               <div className="form-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                   <HiOutlineIdentification /> RIF / Identificación Fiscal
                 </label>
-                <input
-                  type="text"
-                  value={config.rif || ''}
-                  onChange={e => handleChange('rif', e.target.value)}
-                  placeholder="Ej. J-50123456-7"
-                  required
-                />
+                {/* fieldset deshabilita los controles internos del campo de RIF */}
+                <fieldset disabled={!puedeFiscal} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+                  <CampoDocumento
+                    value={config.rif || ''}
+                    onChange={(v) => handleChange('rif', v)}
+                    letras={['J', 'G']}
+                    placeholder="50123456-7"
+                    required
+                  />
+                </fieldset>
+                {errores.rif && <small style={{ color: '#ef4444' }}>{errores.rif}</small>}
+                {!puedeFiscal && <small style={{ color: 'var(--text-secondary)' }}>Solo el administrador cambia el RIF.</small>}
               </div>
             </div>
 
@@ -290,18 +308,19 @@ export default function Configuracion() {
                   placeholder="Ej. Caracas, Venezuela"
                   required
                 />
+                {errores.direccion && <small style={{ color: '#ef4444' }}>{errores.direccion}</small>}
               </div>
 
               <div className="form-group">
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                   <HiOutlinePhone /> Teléfono de Contacto
                 </label>
-                <input
-                  type="text"
+                <CampoTelefono
                   value={config.telefono || ''}
-                  onChange={e => handleChange('telefono', e.target.value)}
-                  placeholder="Ej. 0414-1234567"
+                  onChange={(v) => handleChange('telefono', v)}
+                  codigos={[...CODIGOS_FIJOS, ...CODIGOS_CELULAR]}
                 />
+                {errores.telefono && <small style={{ color: '#ef4444' }}>{errores.telefono}</small>}
               </div>
             </div>
 
@@ -332,7 +351,7 @@ export default function Configuracion() {
               </span>
               <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
                 <strong style={{ fontSize: '1rem', display: 'block', color: 'var(--text-primary)' }}>{config.nombre || 'Nombre de Empresa'}</strong>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block' }}>RIF: {config.rif || 'J-00000000-0'}</span>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block' }}>RIF: {config.rif || '(sin RIF)'}</span>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block' }}>{config.direccion || 'Dirección'}</span>
                 {config.telefono && <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'block' }}>Tlf: {config.telefono}</span>}
                 <div style={{ borderTop: '1px dashed var(--border)', margin: '0.75rem 0' }}></div>

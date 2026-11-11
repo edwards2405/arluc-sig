@@ -1,13 +1,8 @@
 import { useState, useMemo } from 'react';
+import toast from 'react-hot-toast';
 import { getEmpresaConfig } from '../../utils/constants';
 import BarcodeSvg from './BarcodeSvg';
-import {
-  HiOutlinePrinter,
-  HiOutlineXMark,
-  HiOutlineMagnifyingGlass,
-  HiOutlineCheck,
-  HiOutlineTag,
-} from 'react-icons/hi2';
+import { HiOutlinePrinter, HiOutlineXMark, HiOutlineMagnifyingGlass, HiOutlineTag } from 'react-icons/hi2';
 
 const MEDIDAS_ETIQUETA = {
   '50x30': { label: '50 x 30 mm (Estándar Góndola)', width: '50mm', height: '30mm', barWidth: 1.3, barHeight: 30, fontSize: 10 },
@@ -116,7 +111,7 @@ export default function ModalImprimirEtiquetas({ productos = [], productoInicial
     });
 
     if (listaEtiquetas.length === 0) {
-      alert('Por favor selecciona al menos un producto con cantidad mayor a cero.');
+      toast.error('Seleccione al menos un producto con cantidad mayor a cero.');
       return;
     }
 

@@ -11,7 +11,7 @@ export default function CxCConfigModal({ isOpen, config, onSave, onClose }) {
 
   if (!isOpen) return null;
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     const dias = parseInt(form.diasGracia, 10);
     const porcentaje = parseFloat(form.porcentajeRecargo);
@@ -25,13 +25,13 @@ export default function CxCConfigModal({ isOpen, config, onSave, onClose }) {
       return;
     }
 
-    onSave({
+    // El aviso de éxito o error lo da onSave; solo se cierra si se guardó.
+    const guardado = await onSave({
       diasGracia: dias,
       porcentajeRecargo: porcentaje,
       aplicarRecargoAutomatico: form.aplicarRecargoAutomatico,
     });
-    toast.success('Regla de recargos actualizada');
-    onClose();
+    if (guardado) onClose();
   }
 
   return (

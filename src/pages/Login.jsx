@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import ThemeToggle from '../components/common/ThemeToggle';
 import toast from 'react-hot-toast';
+import { mensajeError } from '../utils/errores';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -22,9 +23,12 @@ export default function Login() {
     try {
       await signIn(email, password);
       toast.success('¡Bienvenido!');
-      navigate('/dashboard');
+      // La ruta raíz redirige a la pantalla inicial del rol (rutaInicio: vendedor → /pos)
+      navigate('/', { replace: true });
     } catch (error) {
-      toast.error(error.message || 'Error al iniciar sesión');
+      toast.error(/invalid login credentials/i.test(error?.message || '')
+        ? 'Correo o contraseña incorrectos'
+        : mensajeError(error, 'Error al iniciar sesión'));
     } finally {
       setLoading(false);
     }
@@ -36,7 +40,7 @@ export default function Login() {
       <div className="login-card">
         <div className="login-card__header">
           <img src="/logo-arluc.jpg" alt="ARLUC" className="login-card__logo" />
-          <h1 className="login-card__title">ARLUC System</h1>
+          <h1 className="login-card__title">ARLUC</h1>
           <p className="login-card__subtitle">Sistema ERP ARLUC</p>
         </div>
 

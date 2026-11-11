@@ -217,7 +217,7 @@ export default function POSPaymentSection({
                               placeholder="Nombre / Titular del Emisor Zelle"
                               value={mp.zelle_titular || ''}
                               onChange={(e) => onActualizarMetodoPago(index, 'zelle_titular', e.target.value)}
-                              required
+                              aria-required="true"
                             />
                           </div>
                           <div className="form-group" style={{ marginBottom: 0 }}>
@@ -226,7 +226,17 @@ export default function POSPaymentSection({
                               placeholder="Correo del Emisor Zelle"
                               value={mp.zelle_email || ''}
                               onChange={(e) => onActualizarMetodoPago(index, 'zelle_email', e.target.value)}
-                              required
+                              aria-required="true"
+                            />
+                          </div>
+                          <div className="form-group" style={{ marginTop: '0.35rem', marginBottom: 0 }}>
+                            <input
+                              type="text"
+                              placeholder="N° de Confirmación Zelle *"
+                              maxLength={30}
+                              value={mp.referencia || ''}
+                              onChange={(e) => onActualizarMetodoPago(index, 'referencia', e.target.value)}
+                              aria-required="true"
                             />
                           </div>
                         </div>
@@ -271,7 +281,9 @@ export default function POSPaymentSection({
                             <div className="form-group" style={{ marginBottom: 0 }}>
                               <input
                                 type="text"
-                                placeholder="N° Referencia del Pago de la Inicial"
+                                placeholder="N° Referencia del Pago de la Inicial *"
+                                maxLength={30}
+                                aria-required="true"
                                 value={mp.cashea_referencia_inicial || ''}
                                 onChange={(e) => onActualizarMetodoPago(index, 'cashea_referencia_inicial', e.target.value)}
                               />
@@ -293,8 +305,9 @@ export default function POSPaymentSection({
                                 : 'N° de Referencia / Comprobante'
                             }
                             value={mp.referencia || ''}
+                            maxLength={30}
                             onChange={(e) => onActualizarMetodoPago(index, 'referencia', e.target.value)}
-                            required
+                            aria-required="true"
                           />
                         </div>
                       )}

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { formatDolares, formatBs, formatFecha } from '../../../utils/formatters';
-import { HiOutlineBanknotes, HiOutlineFunnel, HiOutlineCalendar } from 'react-icons/hi2';
+import { HiOutlineBanknotes } from 'react-icons/hi2';
 import Pagination from '../../common/Pagination';
 
 export default function CxCPaymentsReport({ abonosHistorico = [], tasaValor = 0 }) {

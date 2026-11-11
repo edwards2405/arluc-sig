@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { getEmpresaConfig, saveEmpresaConfig, DEFAULT_EMPRESA, PRINT_WIDTHS } from '../../utils/constants';
+import { getEmpresaConfig, saveEmpresaConfig, DEFAULT_EMPRESA, PRINT_WIDTHS, EVENTO_EMPRESA_ACTUALIZADA } from '../../utils/constants';
 import { formatMonto, formatBs, formatDolares, formatFecha, formatTasa } from '../../utils/formatters';
 import { HiOutlinePrinter, HiOutlineXMark } from 'react-icons/hi2';
 
 export default function TicketFactura({ factura, onClose }) {
   const config = PRINT_WIDTHS['80mm'];
   const [empresa, setEmpresa] = useState(() => getEmpresaConfig());
-  const logoUrl = '/logo-arluc.jpg';
+  const logoUrl = empresa.logo || DEFAULT_EMPRESA.logo;
 
   useEffect(() => {
     // Sincronizar con Supabase si está disponible
@@ -36,12 +36,8 @@ export default function TicketFactura({ factura, onClose }) {
     const handleUpdate = (e) => {
       if (e.detail) setEmpresa(e.detail);
     };
-    window.addEventListener('arluc_empresa_config_updated', handleUpdate);
-    window.addEventListener('dj7_empresa_config_updated', handleUpdate);
-    return () => {
-      window.removeEventListener('arluc_empresa_config_updated', handleUpdate);
-      window.removeEventListener('dj7_empresa_config_updated', handleUpdate);
-    };
+    window.addEventListener(EVENTO_EMPRESA_ACTUALIZADA, handleUpdate);
+    return () => window.removeEventListener(EVENTO_EMPRESA_ACTUALIZADA, handleUpdate);
   }, []);
 
   function handlePrint() {

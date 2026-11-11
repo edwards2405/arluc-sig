@@ -14,7 +14,7 @@ create function pg_temp.como(p_email text) returns void language sql as $$
 -- Factura de contado de hace más de 10 días con al menos 2 unidades de un producto
 select f.id as fact, f.numero_factura, d.producto_id as prod, d.producto_nombre, d.cantidad as vendidos, f.fecha_emision::date as fecha_fact
   from facturas f join detalles_factura d on d.factura_id = f.id
- where f.estado = 'emitida' and f.cliente_id is null and f.iva_retenido_usd = 0 and d.cantidad >= 2
+ where f.estado = 'emitida' and f.iva_retenido_usd = 0 and d.cantidad >= 2
    and f.fecha_emision < current_date - 10
    and not exists (select 1 from cuentas_por_cobrar c where c.factura_id = f.id)
  order by f.fecha_emision limit 1 \gset

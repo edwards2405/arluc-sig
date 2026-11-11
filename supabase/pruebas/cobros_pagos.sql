@@ -11,16 +11,19 @@ create function pg_temp.como(p_email text) returns void language sql as $$
            json_build_object('sub', (select id from public.usuarios where email = p_email), 'role', 'authenticated')::text, true),
          set_config('role', 'authenticated', true) $$;
 
-\echo '=== 1. Venta a crédito a Producciones Eventos 360 hace 20 días (plazo 15 días → vencida)'
+\echo '=== 1. Venta a crédito a Producciones Eventos 360 en el mes abierto, vencida hace 5 días'
+-- Los meses anteriores los cierra el seed: la venta se fecha dentro del mes en curso (hasta 20 días atrás)
+-- y su vencimiento se adelanta para que quede en mora sin depender del día del mes.
 select f.id as factura, f.numero_factura, f.total_usd, t.tasa_usd_bs as tasa_factura
   from interno.emitir_factura(
          (select id from usuarios where email = 'vendedor@arluc.test'),
          (select id from clientes where documento_identidad = 'J-41234567-0'),
          jsonb_build_array(jsonb_build_object('producto_id', (select id from productos where sku = 'AUD-003'), 'cantidad', 2)),
-         '[{"metodo_id":"credito","monto_usd":197.20}]', false, now() - interval '20 days') f
+         '[{"metodo_id":"credito","monto_usd":197.20}]', false, greatest(date_trunc('month', now()) + interval '1 minute', now() - interval '20 days')) f
   join tasas_cambio t on t.id = f.tasa_id \gset
 \echo :numero_factura total=:total_usd tasa_factura=:tasa_factura
 select id as cxc from cuentas_por_cobrar where factura_id = :'factura' \gset
+update cuentas_por_cobrar set fecha_vencimiento = current_date - 5 where id = :'cxc';
 
 \echo '=== 2. Cartera: recargo 5 % por mora sobre el capital'
 select pg_temp.como('vendedor@arluc.test');
@@ -47,11 +50,11 @@ select pg_temp.como('gerente@arluc.test');
 select anular_abono(:'abono1', 'Billete falso detectado');
 select capital_pendiente_usd, recargo_pendiente_usd, saldo_total_usd, estado from v_cuentas_por_cobrar where id = :'cxc';
 
-\echo '=== 7. Compra recibida hace 20 días y pagada hoy por Zelle (IGTF a cargo + diferencial)'
+\echo '=== 7. Compra recibida días atrás (en el mes abierto) y pagada hoy por Zelle (IGTF a cargo + diferencial)'
 reset role;
-select set_config('arluc.fecha_operacion', (now() - interval '20 days')::text, true) is not null as fecha_fijada;
-insert into ordenes_compra (numero_orden, proveedor_id, registrado_por)
-values ('OC-PRUEBA', (select id from proveedores where rif = 'J-30512894-1'), (select id from usuarios where email = 'almacen@arluc.test'))
+select set_config('arluc.fecha_operacion', greatest(date_trunc('month', now()) + interval '1 minute', now() - interval '20 days')::text, true) is not null as fecha_fijada;
+insert into ordenes_compra (numero_orden, proveedor_id, registrado_por, numero_factura_proveedor, numero_control_proveedor)
+values ('OC-PRUEBA', (select id from proveedores where rif = 'J-30512894-1'), (select id from usuarios where email = 'almacen@arluc.test'), 'FP-PRUEBA-1', '00-11223344')
 returning id as orden \gset
 insert into detalles_orden_compra (orden_id, producto_id, cantidad, precio_unitario_usd)
 values (:'orden', (select id from productos where sku = 'AUD-001'), 5, 170);

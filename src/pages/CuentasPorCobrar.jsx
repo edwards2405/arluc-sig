@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { useDialogo } from '../components/common/DialogoProvider';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { getEmpresaConfig } from '../utils/constants';
+import { puede } from '../utils/permisos';
+import { mensajeError } from '../utils/errores';
 import {
   DEFAULT_CXC_CONFIG,
   fetchCxCConfig,
@@ -30,8 +33,11 @@ import {
 } from 'react-icons/hi2';
 
 export default function CuentasPorCobrar() {
+  const { pedirTexto } = useDialogo();
   const navigate = useNavigate();
   const { profile } = useAuth();
+  const rol = profile?.rol;
+  const puedeConfigurar = puede(rol, 'cxc.configurar');
   const [loading, setLoading] = useState(true);
   const [cuentasProcesadas, setCuentasProcesadas] = useState([]);
   const [tasaHoy, setTasaHoy] = useState(null);
@@ -57,25 +63,22 @@ export default function CuentasPorCobrar() {
     setLoading(true);
     try {
       // Cartera, mora y saldos calculados en la base de datos
-      const [cuentas, cfg, { data: tasaData }] = await Promise.all([
+      // Tasa vigente (la de hoy o la última anterior), igual que el POS
+      const [cuentas, cfg, { data: tasaData, error: errorTasa }] = await Promise.all([
         fetchCuentasPorCobrar(),
         fetchCxCConfig(),
-        supabase
-          .from('tasas_cambio')
-          .select('*')
-          .order('fecha_registro', { ascending: false })
-          .limit(1)
-          .maybeSingle(),
+        supabase.rpc('tasa_vigente'),
       ]);
 
       setCuentasProcesadas(cuentas);
       setConfig(cfg);
-      if (tasaData) setTasaHoy(tasaData);
+      if (errorTasa) toast.error('No se pudo obtener la tasa vigente: ' + mensajeError(errorTasa));
+      setTasaHoy(Number(tasaData) || null);
       setEmpresa(getEmpresaConfig());
       return cuentas;
     } catch (e) {
       console.error('Error cargando cuentas por cobrar:', e);
-      toast.error('Error cargando cuentas por cobrar: ' + e.message);
+      toast.error('Error cargando cuentas por cobrar: ' + mensajeError(e));
       return [];
     } finally {
       setLoading(false);
@@ -138,7 +141,7 @@ export default function CuentasPorCobrar() {
       promedioDias,
       totalCuentas: activas.length,
     };
-  }, [cuentasProcesadas, config.diasGracia]);
+  }, [cuentasProcesadas]);
 
   // Paginación
   const totalItems = cuentasFiltradas.length;
@@ -156,8 +159,10 @@ export default function CuentasPorCobrar() {
       setConfig(await saveCxCConfig(newConfig));
       toast.success('Política de crédito y mora actualizada');
       await cargarDatos();
+      return true;
     } catch (e) {
-      toast.error('Error al guardar la configuración: ' + e.message);
+      toast.error('Error al guardar la configuración: ' + mensajeError(e));
+      return false;
     }
   }
 
@@ -173,17 +178,19 @@ export default function CuentasPorCobrar() {
   }
 
   async function handleEliminarAbono(cxcId, abonoId) {
-    const motivo = window.prompt('Motivo de la anulación del abono:');
-    if (!motivo?.trim()) {
-      toast.error('Debe indicar el motivo de la anulación');
-      return;
-    }
+    const motivo = await pedirTexto({
+      titulo: 'Anular abono',
+      mensaje: 'El abono se anula, el saldo de la cuenta vuelve a subir y se revierte su asiento contable.',
+      etiqueta: 'Motivo de la anulación', multilinea: true, minimo: 10, maximo: 300,
+      variante: 'danger', textoConfirmar: 'Anular abono',
+    });
+    if (!motivo) return;
     try {
-      await anularAbono(abonoId, motivo.trim());
+      await anularAbono(abonoId, motivo);
       toast.success('Abono anulado y asiento revertido');
       await refrescarCuentaAbierta(cxcId);
     } catch (e) {
-      toast.error(e.message);
+      toast.error(mensajeError(e));
     }
   }
 
@@ -196,7 +203,7 @@ export default function CuentasPorCobrar() {
     );
   }
 
-  const tasaValor = tasaHoy?.tasa_usd_bs || 0;
+  const tasaValor = tasaHoy || 0;
 
   return (
     <div className="page">
@@ -235,14 +242,16 @@ export default function CuentasPorCobrar() {
           >
             <HiOutlineArrowPath /> Refrescar
           </button>
-          <button
-            type="button"
-            className="btn btn--secondary"
-            onClick={() => setShowConfigModal(true)}
-            title="Configurar regla de días de gracia y porcentaje de recargo"
-          >
-            <HiOutlineCog6Tooth /> Reglas
-          </button>
+          {puedeConfigurar && (
+            <button
+              type="button"
+              className="btn btn--secondary"
+              onClick={() => setShowConfigModal(true)}
+              title="Configurar regla de días de gracia y porcentaje de recargo"
+            >
+              <HiOutlineCog6Tooth /> Reglas
+            </button>
+          )}
           <button
             type="button"
             className="btn btn--primary"
@@ -291,8 +300,9 @@ export default function CuentasPorCobrar() {
         config={config}
         empresa={empresa}
         onOpenAbonos={(c) => setCuentaParaAbonar(c)}
-        onOpenConfig={() => setShowConfigModal(true)}
+        onOpenConfig={puedeConfigurar ? () => setShowConfigModal(true) : null}
         onVerArticulos={(c) => setCuentaParaVerArticulos(c)}
+        puedeAbonar={puede(rol, 'abono.registrar')}
       />
 
       {/* Paginación */}
@@ -312,20 +322,22 @@ export default function CuentasPorCobrar() {
       />
 
       {/* Modal de Configuración de Recargo y Días */}
-      <CxCConfigModal
-        isOpen={showConfigModal}
-        config={config}
-        onSave={handleSaveConfig}
-        onClose={() => setShowConfigModal(false)}
-      />
+      {showConfigModal && puedeConfigurar && (
+        <CxCConfigModal
+          isOpen
+          config={config}
+          onSave={handleSaveConfig}
+          onClose={() => setShowConfigModal(false)}
+        />
+      )}
 
       {/* Modal de Abonos y Cobro */}
       <CxCAbonoModal
         isOpen={!!cuentaParaAbonar}
         cuenta={cuentaParaAbonar}
         tasaValor={tasaValor}
-        onRegistrarAbono={handleRegistrarAbono}
-        onEliminarAbono={handleEliminarAbono}
+        onRegistrarAbono={puede(rol, 'abono.registrar') ? handleRegistrarAbono : null}
+        onEliminarAbono={puede(rol, 'abono.anular') ? handleEliminarAbono : null}
         onClose={() => setCuentaParaAbonar(null)}
       />
     </div>

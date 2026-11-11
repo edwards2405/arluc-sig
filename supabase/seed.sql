@@ -180,6 +180,8 @@ declare
   v_cliente uuid;
   v_r numeric;
   v_orden uuid;
+  v_num bigint;
+  v_metodo text;
   p record;
   c record;
 begin
@@ -189,10 +191,12 @@ begin
     -- 1) Reposición: compra y recepción de lo que está bajo el mínimo.
     perform set_config('arluc.fecha_operacion', (d + time '09:00')::text, false);
     for p in select * from public.productos where stock < stock_minimo + 2 loop
+      -- El número de factura del proveedor es único por proveedor: se deriva del correlativo.
+      v_num := interno.siguiente_valor('orden_compra');
       insert into public.ordenes_compra (numero_orden, proveedor_id, registrado_por, numero_factura_proveedor, numero_control_proveedor)
-      values ('OC-' || lpad(interno.siguiente_valor('orden_compra')::text, 6, '0'),
+      values ('OC-' || lpad(v_num::text, 6, '0'),
               (select id from public.proveedores order by random() limit 1), c_almacen,
-              'FP-' || (10000 + floor(random() * 89999))::int, '00-' || lpad(floor(random() * 99999999)::int::text, 8, '0'))
+              'FP-' || (10000 + v_num)::text, '00-' || lpad(floor(random() * 99999999)::int::text, 8, '0'))
       returning id into v_orden;
       insert into public.detalles_orden_compra (orden_id, producto_id, cantidad, precio_unitario_usd)
       values (v_orden, p.id, p.stock_minimo * 3 + 5, round(p.costo_usd * (0.97 + random() * 0.08)::numeric, 2));
@@ -210,10 +214,10 @@ begin
                                           else 1 + floor(random() * 2)::int end) as cant
                 from public.productos pr where pr.stock > 0 order by random() limit 1 + floor(random() * 3)::int) x;
       v_r := random();
-      v_cliente := null;
+      -- Toda factura tiene un cliente registrado; las ventas a crédito, uno con crédito activo.
       if v_r >= 0.88 then
         select id into v_cliente from public.clientes where credito_activo order by random() limit 1;
-      elsif random() < 0.35 then
+      else
         select id into v_cliente from public.clientes order by random() limit 1;
       end if;
       select coalesce(bool_or(contribuyente_especial), false) into v_es_especial from public.clientes where id = v_cliente;
@@ -229,13 +233,15 @@ begin
         when v_r < 0.62 then jsonb_build_array(jsonb_build_object('metodo_id', 'punto_venta', 'monto_usd', v_total,
                                'referencia', 'PV-' || floor(random() * 999999)::int))
         when v_r < 0.71 then jsonb_build_array(jsonb_build_object('metodo_id', 'zelle', 'monto_usd', v_total,
+                               'referencia', 'ZL-' || floor(random() * 999999)::int,
                                'zelle_titular', 'Cliente Zelle', 'zelle_email', 'pagos@correo.test'))
         when v_r < 0.80 then jsonb_build_array(
                                jsonb_build_object('metodo_id', 'pago_movil', 'monto_usd', v_mitad,
                                                   'referencia', 'PM-' || floor(random() * 999999)::int),
                                jsonb_build_object('metodo_id', 'efectivo_usd', 'monto_usd', v_total - v_mitad))
         when v_r < 0.88 then jsonb_build_array(jsonb_build_object('metodo_id', 'cashea', 'monto_usd', round(v_total * 0.4, 2),
-                               'referencia', 'CSH-' || floor(random() * 99999)::int, 'cashea_metodo_inicial', 'punto_venta'))
+                               'referencia', 'CSH-' || floor(random() * 99999)::int, 'cashea_metodo_inicial', 'punto_venta',
+                               'cashea_referencia_inicial', 'PV-' || floor(random() * 999999)::int))
         else jsonb_build_array(jsonb_build_object('metodo_id', 'credito', 'monto_usd', v_total)) end;
       if v_retencion > 0 then
         v_pagos := v_pagos || jsonb_build_array(jsonb_build_object('metodo_id', 'retencion_iva', 'monto_usd', v_retencion));
@@ -252,10 +258,11 @@ begin
     for c in select * from public.cuentas_por_cobrar
               where tipo = 'CREDITO_DIRECTO' and estado = 'PENDIENTE' and fecha_emision <= d - 5 loop
       if random() < 0.12 then
+        v_metodo := (array['efectivo_usd', 'pago_movil', 'transferencia'])[1 + floor(random() * 3)::int];
         perform interno.registrar_abono(
-          c.id, case when random() < 0.5 then round(c.saldo_usd / 2, 2) else c.saldo_usd end,
-          (array['efectivo_usd', 'pago_movil', 'transferencia'])[1 + floor(random() * 3)::int],
-          null, 'Abono de cliente', d + time '11:30');
+          c.id, case when random() < 0.5 then round(c.saldo_usd / 2, 2) else c.saldo_usd end, v_metodo,
+          case when v_metodo <> 'efectivo_usd' then 'AB-' || floor(random() * 999999)::int end,
+          'Abono de cliente', d + time '11:30');
       end if;
     end loop;
     -- Cashea liquida lo financiado al vencimiento.
@@ -267,8 +274,9 @@ begin
     -- 4) Pagos a proveedores a partir de los 20 días.
     for c in select * from public.cuentas_por_pagar where estado = 'PENDIENTE' and fecha_emision <= d - 20 loop
       if random() < 0.5 then
-        perform interno.pagar_cxp(c.id, c.saldo_usd,
-          (array['transferencia', 'efectivo_usd'])[1 + floor(random() * 2)::int], null, null, d + time '16:00');
+        v_metodo := (array['transferencia', 'efectivo_usd'])[1 + floor(random() * 2)::int];
+        perform interno.pagar_cxp(c.id, c.saldo_usd, v_metodo,
+          case when v_metodo = 'transferencia' then 'TR-' || floor(random() * 999999)::int end, null, d + time '16:00');
       end if;
     end loop;
 

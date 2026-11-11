@@ -30,6 +30,12 @@ export default function ProtectedRoute({ children }) {
         >
           Reintentar
         </button>
+        <button
+          onClick={signOut}
+          style={{ marginTop: '0.5rem', padding: '0.5rem 1rem', borderRadius: '0.5rem', background: 'transparent', color: 'var(--text-primary)', border: '1px solid var(--border)', cursor: 'pointer' }}
+        >
+          Cerrar sesión
+        </button>
       </div>
     );
   }

@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { exigirFilas } from '../utils/errores';
 
 const PAGE_SIZE = 1000;
 
@@ -53,7 +54,7 @@ function crearConsultaAsientos({ modulo, search, buscarNumero }) {
     .from('asientos_contables')
     .select(`
       id, numero, fecha, glosa, modulo, registrado_por, total_debe, total_haber,
-      balanceado, tasa_cambio, created_at,
+      balanceado, tasa_cambio, created_at, estado, referencia_tipo, motivo_anulacion,
       lineas_asiento (
         id, debe, haber, debe_ves, haber_ves,
         plan_cuentas ( id, codigo, nombre, tipo )
@@ -99,19 +100,6 @@ export async function fetchCuentasOperativas() {
 }
 
 /**
- * Obtiene todas las cuentas activas del plan contable.
- */
-export async function fetchPlanCuentas() {
-  const { data, error } = await supabase
-    .from('plan_cuentas')
-    .select('id, codigo, nombre, tipo, naturaleza, es_padre, cuenta_padre_id, activo')
-    .eq('activo', true)
-    .order('codigo');
-  if (error) throw error;
-  return data || [];
-}
-
-/**
  * Obtiene TODAS las cuentas (activas e inactivas) para gestión.
  */
 export async function fetchPlanCuentasCompleto() {
@@ -148,27 +136,13 @@ export async function crearCuenta({ codigo, nombre, tipo, naturaleza, es_padre, 
  * Activa/desactiva una cuenta contable.
  */
 export async function toggleCuentaActiva(cuentaId, activo) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('plan_cuentas')
     .update({ activo })
-    .eq('id', cuentaId);
+    .eq('id', cuentaId)
+    .select('id');
   if (error) throw error;
-}
-
-/**
- * Actualiza datos de una cuenta contable.
- */
-export async function actualizarCuenta(cuentaId, { nombre, tipo, naturaleza, es_padre }) {
-  const { error } = await supabase
-    .from('plan_cuentas')
-    .update({
-      nombre: nombre.trim(),
-      tipo,
-      naturaleza,
-      es_padre: es_padre || false,
-    })
-    .eq('id', cuentaId);
-  if (error) throw error;
+  exigirFilas(data);
 }
 
 /**
@@ -280,6 +254,32 @@ export async function crearAsiento(fecha, glosa, modulo, lineas) {
     p_glosa: glosa.trim(),
     p_modulo: modulo,
     p_lineas: lineasLimpias,
+  });
+  if (error) throw error;
+  return data;
+}
+
+/** Módulos de los asientos que la BD permite anular (anular_asiento). */
+export const MODULOS_ANULABLES = ['Manual', 'Tesorería', 'Gastos', 'Ajuste', 'Nómina'];
+
+/**
+ * Solo se anulan asientos manuales vigentes: los automáticos (con documento
+ * de origen) se revierten anulando ese documento.
+ */
+export function esAsientoAnulable(asiento) {
+  return asiento?.estado !== 'ANULADO'
+    && !asiento?.referencia_tipo
+    && MODULOS_ANULABLES.includes(asiento?.modulo);
+}
+
+/**
+ * Anula un asiento manual generando su asiento de reverso. Devuelve el id del reverso.
+ */
+export async function anularAsiento(asientoId, motivo) {
+  if (!motivo?.trim()) throw new Error('Indique el motivo de la anulación.');
+  const { data, error } = await supabase.rpc('anular_asiento', {
+    p_asiento_id: asientoId,
+    p_motivo: motivo.trim(),
   });
   if (error) throw error;
   return data;

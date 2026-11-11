@@ -1,6 +1,6 @@
 import React from 'react';
 import { formatMonto, formatDolares, formatFecha } from '../../utils/formatters';
-import { HiOutlineXMark, HiOutlineShoppingBag, HiOutlineReceiptPercent } from 'react-icons/hi2';
+import { HiOutlineXMark, HiOutlineShoppingBag } from 'react-icons/hi2';
 
 export default function CxCArticulosModal({ isOpen, cuenta, tasaValor, onClose }) {
   if (!isOpen || !cuenta) return null;

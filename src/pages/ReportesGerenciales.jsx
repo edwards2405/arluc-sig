@@ -10,6 +10,8 @@ import { formatMonto, formatFecha, ejeBs } from '../utils/formatters';
 import VistaReporte from '../components/reportes/VistaReporte';
 import Pagination from '../components/common/Pagination';
 import usePaginacion from '../hooks/usePaginacion';
+import { hoyLocal, validarRango } from '../utils/validaciones';
+import { mensajeError } from '../utils/errores';
 import {
   TIPOS_PROGRAMADOS, DIMENSIONES, modeloProgramado, modeloExcepciones, modeloProyecciones, modeloSolicitud,
 } from '../utils/modelosReportes';
@@ -25,7 +27,10 @@ const TIPOS = [
     texto: 'El usuario elige el período y cómo agrupar la información.' },
 ];
 
-const hoy = () => new Date().toLocaleDateString('en-CA');
+const hoy = hoyLocal;
+// Rango obligatorio, ordenado y sin fechas futuras
+const errorDeRango = (desde, hasta) =>
+  (!desde || !hasta ? 'Indique las fechas «desde» y «hasta»' : validarRango(desde, hasta));
 const haceDias = (n) => {
   const d = new Date();
   d.setDate(d.getDate() - n);
@@ -47,7 +52,7 @@ function Programados() {
     const { data, error } = await supabase.from('reportes_generados')
       .select('id, codigo, titulo, periodo_desde, periodo_hasta, generado_en, origen, verificaciones')
       .eq('codigo', filtro).order('periodo_desde', { ascending: false }).limit(400);
-    if (error) toast.error(error.message);
+    if (error) toast.error(mensajeError(error));
     setLista(data || []);
     setLoading(false);
   }, [filtro]);
@@ -56,15 +61,16 @@ function Programados() {
 
   async function abrir(r) {
     const { data, error } = await supabase.from('reportes_generados').select('*').eq('id', r.id).single();
-    if (error) { toast.error(error.message); return; }
+    if (error) { toast.error(mensajeError(error)); return; }
     // Un reporte ya emitido se expresa en Bs a la tasa de su período, no a la de hoy
-    const { data: tasa } = await supabase.rpc('tasa_vigente', { p_fecha: data.periodo_hasta });
+    const { data: tasa, error: errorTasa } = await supabase.rpc('tasa_vigente', { p_fecha: data.periodo_hasta });
+    if (errorTasa) { toast.error('No se pudo obtener la tasa del período: ' + mensajeError(errorTasa)); return; }
     setSeleccionado({ ...data, tasa });
   }
 
   async function regenerar() {
     const { error } = await supabase.rpc('generar_reporte_programado', { p_codigo: seleccionado.codigo, p_fecha: seleccionado.periodo_hasta });
-    if (error) { toast.error(error.message); return; }
+    if (error) { toast.error(mensajeError(error)); return; }
     toast.success('Reporte regenerado con los datos actuales');
     await cargar();
     abrir(seleccionado);
@@ -131,10 +137,13 @@ function Excepciones() {
   const [desde, setDesde] = useState(haceDias(30));
   const [hasta, setHasta] = useState(hoy());
   const [datos, setDatos] = useState(null);
+  const errorRango = errorDeRango(desde, hasta);
 
   const cargar = useCallback(async () => {
+    // Rango inválido: se muestra el error y no se consulta
+    if (errorDeRango(desde, hasta)) { setDatos(null); return; }
     const { data, error } = await supabase.rpc('reporte_excepciones', { p_desde: desde, p_hasta: hasta });
-    if (error) { toast.error(error.message); return; }
+    if (error) { toast.error(mensajeError(error)); return; }
     setDatos(data);
   }, [desde, hasta]);
 
@@ -146,16 +155,37 @@ function Excepciones() {
         <label>Desde <input type="date" value={desde} max={hasta} onChange={(e) => setDesde(e.target.value)} /></label>
         <label>Hasta <input type="date" value={hasta} min={desde} max={hoy()} onChange={(e) => setHasta(e.target.value)} /></label>
       </div>
-      {datos && <VistaReporte reporte={modeloExcepciones(datos, desde, hasta)} />}
+      {errorRango && <p className="text-danger" role="alert" style={{ margin: '0 0 1rem', fontSize: '0.85rem' }}>{errorRango}</p>}
+      {!errorRango && datos && <VistaReporte reporte={modeloExcepciones(datos, desde, hasta)} />}
     </>
   );
 }
 
 function Proyecciones() {
   const [datos, setDatos] = useState(null);
-  useEffect(() => {
-    supabase.rpc('reporte_proyecciones').then(({ data, error }) => (error ? toast.error(error.message) : setDatos(data)));
+  const [error, setError] = useState(null);
+
+  const cargar = useCallback(async () => {
+    setError(null);
+    const { data, error: errorRpc } = await supabase.rpc('reporte_proyecciones');
+    if (errorRpc) {
+      setError(mensajeError(errorRpc));
+      toast.error('Error calculando proyecciones: ' + mensajeError(errorRpc));
+      return;
+    }
+    setDatos(data);
   }, []);
+
+  useEffect(() => { cargar(); }, [cargar]);
+
+  if (error && !datos) {
+    return (
+      <div className="card" role="alert" style={{ padding: '2rem', textAlign: 'center' }}>
+        <p className="text-danger" style={{ marginBottom: '1rem' }}>No se pudieron calcular las proyecciones: {error}</p>
+        <button className="btn btn--primary" onClick={cargar}><HiOutlineArrowPath /> Reintentar</button>
+      </div>
+    );
+  }
   if (!datos) return <div className="page-loading"><div className="loading-spinner" /><p>Calculando proyecciones...</p></div>;
   const serie = datos.ventas.map((v) => ({ semana: formatFecha(v.semana).slice(0, 5), ventas: Number(v.ventas), tipo: v.tipo }));
   return (
@@ -185,7 +215,7 @@ function Proyecciones() {
 }
 
 function Solicitud() {
-  const [desde, setDesde] = useState(new Date().toLocaleDateString('en-CA').slice(0, 8) + '01');
+  const [desde, setDesde] = useState(hoyLocal().slice(0, 8) + '01');
   const [hasta, setHasta] = useState(hoy());
   const [dimension, setDimension] = useState('categoria');
   const [resultado, setResultado] = useState(null);
@@ -193,10 +223,12 @@ function Solicitud() {
 
   async function generar(e) {
     e?.preventDefault();
+    const errorRango = errorDeRango(desde, hasta);
+    if (errorRango) { toast.error(errorRango); return; }
     setCargando(true);
     const { data, error } = await supabase.rpc('reporte_a_solicitud', { p_desde: desde, p_hasta: hasta, p_dimension: dimension });
     setCargando(false);
-    if (error) { toast.error(error.message); return; }
+    if (error) { toast.error(mensajeError(error)); return; }
     setResultado({ ...data, desde, hasta, dimension });
   }
 

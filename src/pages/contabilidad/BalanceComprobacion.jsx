@@ -14,6 +14,7 @@ import toast from 'react-hot-toast';
 import { exportarExcel, imprimirReporte } from '../../utils/reportes';
 import { formatFecha as formatearFecha } from '../../utils/formatters';
 import { fetchBalanceComprobacion } from '../../services/contabilidadService';
+import { hoyLocal, validarRango } from '../../utils/validaciones';
 
 export default function BalanceComprobacion() {
   const [datos, setDatos] = useState([]);
@@ -22,8 +23,15 @@ export default function BalanceComprobacion() {
   const [searchTerm, setSearchTerm] = useState('');
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
+  const errorRango = validarRango(fechaDesde, fechaHasta);
 
   const loadData = useCallback(async () => {
+    // Rango inválido: se muestra el error y no se consulta
+    if (validarRango(fechaDesde, fechaHasta)) {
+      setDatos([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const data = await fetchBalanceComprobacion({
@@ -298,6 +306,7 @@ export default function BalanceComprobacion() {
               <input
                 type="date"
                 value={fechaDesde}
+                max={fechaHasta || hoyLocal()}
                 onChange={(e) => setFechaDesde(e.target.value)}
                 style={{
                   padding: '0.4rem 0.6rem',
@@ -315,6 +324,8 @@ export default function BalanceComprobacion() {
               <input
                 type="date"
                 value={fechaHasta}
+                min={fechaDesde || undefined}
+                max={hoyLocal()}
                 onChange={(e) => setFechaHasta(e.target.value)}
                 style={{
                   padding: '0.4rem 0.6rem',
@@ -345,6 +356,11 @@ export default function BalanceComprobacion() {
             )}
           </div>
         </div>
+        {errorRango && (
+          <p className="text-danger" role="alert" style={{ margin: '0.5rem 0 0', fontSize: '0.85rem' }}>
+            {errorRango}. Corrija el rango para consultar.
+          </p>
+        )}
       </div>
 
       {/* Table */}

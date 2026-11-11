@@ -6,6 +6,8 @@ import toast from 'react-hot-toast';
 import Pagination from '../components/common/Pagination';
 import ConfirmModal from '../components/common/ConfirmModal';
 import { ROLES_LABEL } from '../utils/permisos';
+import { tieneTexto, validarCorreo } from '../utils/validaciones';
+import { mensajeError, exigirFilas } from '../utils/errores';
 import {
   HiOutlineUserPlus,
   HiOutlineLockClosed,
@@ -21,6 +23,7 @@ export default function Usuarios() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ email: '', password: '', nombre_completo: '', rol: 'vendedor' });
   const [creando, setCreando] = useState(false);
+  const [errores, setErrores] = useState({});
 
   // Confirm modal state
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -31,32 +34,36 @@ export default function Usuarios() {
 
   async function loadUsuarios() {
     setLoading(true);
-    const { data } = await supabase.from('usuarios').select('*').order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('usuarios').select('*').order('created_at', { ascending: false });
+    if (error) toast.error(mensajeError(error, 'No se pudieron cargar los usuarios'));
     setUsuarios(data || []);
     setLoading(false);
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!form.email || !form.password || !form.nombre_completo) {
-      toast.error('Complete todos los campos');
-      return;
+    const nombre = form.nombre_completo.trim().replace(/\s+/g, ' ');
+    const email = form.email.trim().toLowerCase();
+    const errs = {};
+    if (!tieneTexto(nombre)) errs.nombre_completo = 'El nombre es obligatorio';
+    const errCorreo = validarCorreo(email, { opcional: false });
+    if (errCorreo) errs.email = errCorreo;
+    if (form.password.length < 8 || !/[A-Za-z]/.test(form.password) || !/\d/.test(form.password)) {
+      errs.password = 'La contraseña debe tener al menos 8 caracteres, con letras y números';
     }
-    if (form.password.length < 6) {
-      toast.error('La contraseña debe tener al menos 6 caracteres');
-      return;
-    }
+    setErrores(errs);
+    if (Object.keys(errs).length) return;
 
     setCreando(true);
     try {
-      await createUser(form.email, form.password, form.nombre_completo, form.rol);
+      await createUser(email, form.password, nombre, form.rol);
       toast.success('Usuario creado correctamente');
       setShowModal(false);
       setForm({ email: '', password: '', nombre_completo: '', rol: 'vendedor' });
       // Wait a moment for the trigger to fire
       setTimeout(loadUsuarios, 1000);
     } catch (error) {
-      toast.error(error.message);
+      toast.error(mensajeError(error, 'Error al crear el usuario'));
     } finally {
       setCreando(false);
     }
@@ -77,23 +84,30 @@ export default function Usuarios() {
     }
 
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('usuarios')
         .update({ activo: !usuario.activo })
-        .eq('id', usuario.id);
+        .eq('id', usuario.id)
+        .select('id');
       if (error) throw error;
+      exigirFilas(data);
       toast.success(usuario.activo ? 'Usuario desactivado' : 'Usuario activado');
       loadUsuarios();
     } catch (error) {
-      toast.error(error.message);
+      toast.error(mensajeError(error, 'Error al cambiar el estado del usuario'));
     }
   }
 
   async function cambiarRol(usuario, rol) {
     // La BD impide quitar el rol al último administrador activo
-    const { error } = await supabase.from('usuarios').update({ rol }).eq('id', usuario.id);
+    const { data, error } = await supabase.from('usuarios').update({ rol }).eq('id', usuario.id).select('id');
     if (error) {
-      toast.error(error.message);
+      toast.error(mensajeError(error, 'Error al cambiar el rol'));
+      return;
+    }
+    if (!data?.length) {
+      toast.error('No se cambió el rol: no tiene permiso o el usuario ya no existe.');
+      loadUsuarios();
       return;
     }
     toast.success(`${usuario.nombre_completo} ahora es ${ROLES_LABEL[rol]}`);
@@ -122,26 +136,17 @@ export default function Usuarios() {
     if (!usuarioAEliminar) return;
     setEliminando(true);
     try {
-      // Usar la función RPC eliminar_usuario que desvincula tablas y borra en public.usuarios y auth.users
+      // La RPC eliminar_usuario rechaza a usuarios con operaciones registradas
+      // (facturas, compras, movimientos...); en ese caso hay que desactivarlo.
       const { error } = await supabase.rpc('eliminar_usuario', { p_user_id: usuarioAEliminar.id });
-
-      if (error) {
-        console.warn('RPC eliminar_usuario falló, intentando eliminación directa:', error.message);
-        // Fallback: eliminación directa en public.usuarios
-        const { error: directError } = await supabase
-          .from('usuarios')
-          .delete()
-          .eq('id', usuarioAEliminar.id);
-
-        if (directError) throw new Error(directError.message || error.message);
-      }
+      if (error) throw error;
 
       toast.success(`Usuario "${usuarioAEliminar.nombre_completo}" eliminado permanentemente`);
       setConfirmOpen(false);
       setUsuarioAEliminar(null);
       loadUsuarios();
     } catch (error) {
-      toast.error('Error al eliminar usuario: ' + error.message);
+      toast.error(mensajeError(error, 'Error al eliminar usuario'));
     } finally {
       setEliminando(false);
     }
@@ -156,7 +161,7 @@ export default function Usuarios() {
           <h1 className="page__title">Gestión de Usuarios</h1>
           <p className="page__subtitle">{usuarios.length} usuario(s) registrado(s)</p>
         </div>
-        <button className="btn btn--primary" onClick={() => setShowModal(true)}>
+        <button className="btn btn--primary" onClick={() => { setErrores({}); setShowModal(true); }}>
           <HiOutlineUserPlus /> Nuevo Usuario
         </button>
       </div>
@@ -178,7 +183,7 @@ export default function Usuarios() {
               {usuarios.slice((currentPage - 1) * 20, currentPage * 20).map(u => (
                 <tr key={u.id} className={!u.activo ? 'table__row--muted' : ''}>
                   <td><strong>{u.nombre_completo}</strong></td>
-                  <td style={{ color: '#A3A3A3' }}>{u.email}</td>
+                  <td style={{ color: 'var(--text-secondary)' }}>{u.email}</td>
                   <td>
                     {u.id === user?.id ? (
                       <span className="badge badge--primary">{ROLES_LABEL[u.rol]}</span>
@@ -195,11 +200,11 @@ export default function Usuarios() {
                       {u.activo ? 'Activo' : 'Inactivo'}
                     </span>
                   </td>
-                  <td style={{ color: '#A3A3A3' }}>{formatFecha(u.created_at)}</td>
+                  <td style={{ color: 'var(--text-secondary)' }}>{formatFecha(u.created_at)}</td>
                   <td>
                     <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
                       {u.id === user?.id ? (
-                        <span style={{ fontSize: '0.75rem', color: '#9CA3AF', fontStyle: 'italic', padding: '0.25rem 0.5rem' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontStyle: 'italic', padding: '0.25rem 0.5rem' }}>
                           (Tu cuenta)
                         </span>
                       ) : (
@@ -249,14 +254,19 @@ export default function Usuarios() {
               <div className="form-group">
                 <label>Nombre Completo</label>
                 <input value={form.nombre_completo} onChange={e => setForm({...form, nombre_completo: e.target.value})} required />
+                {errores.nombre_completo && <small style={{ color: '#ef4444' }}>{errores.nombre_completo}</small>}
               </div>
               <div className="form-group">
                 <label>Correo Electrónico</label>
                 <input type="email" value={form.email} onChange={e => setForm({...form, email: e.target.value})} required />
+                {errores.email && <small style={{ color: '#ef4444' }}>{errores.email}</small>}
               </div>
               <div className="form-group">
                 <label>Contraseña</label>
-                <input type="password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} minLength={6} required />
+                <input type="password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} minLength={8} required />
+                {errores.password
+                  ? <small style={{ color: '#ef4444' }}>{errores.password}</small>
+                  : <small>Mínimo 8 caracteres, con letras y números.</small>}
               </div>
               <div className="form-group">
                 <label>Rol</label>
@@ -280,7 +290,7 @@ export default function Usuarios() {
         title="¿Eliminar Usuario Permanentemente?"
         message={
           usuarioAEliminar
-            ? `¿Estás seguro de eliminar permanentemente al usuario "${usuarioAEliminar.nombre_completo}" (${usuarioAEliminar.email})?\n\nEsta acción borrará al usuario del sistema y de Supabase Auth. Los registros históricos (como facturas y compras) se conservarán desvinculando la referencia.`
+            ? `¿Estás seguro de eliminar permanentemente al usuario "${usuarioAEliminar.nombre_completo}" (${usuarioAEliminar.email})?\n\nEsta acción borrará al usuario del sistema y de Supabase Auth. Solo se puede eliminar un usuario sin operaciones registradas (facturas, compras, movimientos); si las tiene, el sistema no lo permitirá y deberá desactivarlo.`
             : ''
         }
         confirmText="Sí, Eliminar Permanentemente"

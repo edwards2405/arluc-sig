@@ -2,26 +2,34 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { formatMonto, formatBs, formatDolares, formatFecha, formatTasa } from '../utils/formatters';
 import toast from 'react-hot-toast';
+import { hoyLocal, validarRango } from '../utils/validaciones';
+import { useDialogo } from '../components/common/DialogoProvider';
 import TicketFactura from '../components/print/TicketFactura';
 import Pagination from '../components/common/Pagination';
 import {
   HiOutlineMagnifyingGlass, HiOutlinePrinter, HiOutlineEye,
-  HiOutlineXCircle, HiOutlineFunnel,
+  HiOutlineXCircle,
 } from 'react-icons/hi2';
 
-import ConfirmModal from '../components/common/ConfirmModal';
 import NotaFiscalModal, { imprimirNota } from '../components/notas/NotaFiscalModal';
 import { useAuth } from '../contexts/AuthContext';
+import { puede } from '../utils/permisos';
+import { mensajeError } from '../utils/errores';
+
+// Día (AAAA-MM-DD) en hora de Venezuela, sin importar la zona del navegador
+const diaCaracas = (fecha) => new Date(fecha).toLocaleDateString('en-CA', { timeZone: 'America/Caracas' });
 
 // Una factura solo se anula el mismo día; después se corrige con nota de crédito
-const esDeHoy = (f) => new Date(f.fecha_emision).toLocaleDateString('en-CA') === new Date().toLocaleDateString('en-CA');
+const esDeHoy = (f) => diaCaracas(f.fecha_emision) === diaCaracas(new Date());
 
 // Tasa de la factura: lo ya emitido nunca se muestra a la tasa de hoy
 const tasaDocumento = (f) => f.tasas_cambio?.tasa_usd_bs || (f.total_usd > 0 ? (f.total_bs / f.total_usd) : 0);
 
 export default function HistorialFacturas() {
+  const { pedirTexto } = useDialogo();
   const { profile } = useAuth();
-  const puedeEmitirNotas = ['admin', 'gerente'].includes(profile?.rol);
+  const puedeEmitirNotas = puede(profile?.rol, 'nota.emitir');
+  const puedeAnular = puede(profile?.rol, 'factura.anular');
   const [notaAEmitir, setNotaAEmitir] = useState(null);
   const [facturas, setFacturas] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -32,8 +40,6 @@ export default function HistorialFacturas() {
   const [currentPage, setCurrentPage] = useState(1);
   const [showDetalle, setShowDetalle] = useState(null);
   const [showTicket, setShowTicket] = useState(null);
-  const [facturaToAnular, setFacturaToAnular] = useState(null);
-  const [anulando, setAnulando] = useState(false);
 
   useEffect(() => { loadFacturas(); }, []);
 
@@ -54,6 +60,7 @@ export default function HistorialFacturas() {
             *,
             clientes(nombre, documento_identidad, contribuyente_especial, porcentaje_retencion_iva),
             usuarios!facturas_vendedor_id_fkey(nombre_completo),
+            anulador:usuarios!facturas_anulada_por_fkey(nombre_completo),
             tasas_cambio(tasa_usd_bs, fecha_registro)
           `)
           .order('fecha_emision', { ascending: false })
@@ -72,45 +79,51 @@ export default function HistorialFacturas() {
       setFacturas(allData);
     } catch (e) {
       console.error('Error cargando historial de facturas:', e);
-      toast.error('Error al cargar historial completo');
+      toast.error('Error al cargar el historial: ' + mensajeError(e));
     } finally {
       setLoading(false);
     }
   }
 
   async function verDetalle(factura) {
-    const [{ data: detalles }, { data: notas }] = await Promise.all([
+    const [{ data: detalles, error: errorDetalles }, { data: notas, error: errorNotas }] = await Promise.all([
       supabase.from('detalles_factura').select('*').eq('factura_id', factura.id),
       supabase.from('notas_fiscales').select('*').eq('factura_id', factura.id).order('fecha_emision'),
     ]);
+    if (errorDetalles || errorNotas) {
+      toast.error('No se pudo cargar el detalle de la factura: ' + mensajeError(errorDetalles || errorNotas));
+      return;
+    }
     setShowDetalle({ ...factura, detalles: detalles || [], notas: notas || [] });
   }
 
-  async function handleConfirmAnular() {
-    if (!facturaToAnular) return;
-    const motivo = window.prompt(`Motivo de la anulación de ${facturaToAnular.numero_factura}:`);
-    if (!motivo?.trim()) {
-      toast.error('Debe indicar el motivo de la anulación');
-      return;
-    }
-    setAnulando(true);
+  async function anularFactura(factura) {
+    const motivo = await pedirTexto({
+      titulo: `Anular factura ${factura.numero_factura}`,
+      mensaje: 'La factura pasará a ANULADA, el inventario se devuelve y se registra el contra-asiento. Solo se anulan facturas del mismo día; después corresponde una nota de crédito.',
+      etiqueta: 'Motivo de la anulación',
+      multilinea: true,
+      minimo: 10,
+      maximo: 300,
+      placeholder: 'Ej.: el cliente desistió de la compra antes de retirar la mercancía',
+      variante: 'danger',
+      textoConfirmar: 'Anular factura',
+    });
+    if (!motivo) return;
     try {
       // Anula, devuelve stock, anula la CxC y registra el contra-asiento.
-      const { error } = await supabase.rpc('anular_factura', {
-        p_factura_id: facturaToAnular.id,
-        p_motivo: motivo.trim(),
-      });
+      const { error } = await supabase.rpc('anular_factura', { p_factura_id: factura.id, p_motivo: motivo });
       if (error) throw error;
-      toast.success(`Factura ${facturaToAnular.numero_factura} anulada. El inventario ha sido revertido.`);
+      toast.success(`Factura ${factura.numero_factura} anulada. El inventario ha sido revertido.`);
       await loadFacturas();
-      if (showDetalle && showDetalle.id === facturaToAnular.id) {
-        setShowDetalle(prev => prev ? { ...prev, estado: 'anulada' } : null);
+      if (showDetalle && showDetalle.id === factura.id) {
+        setShowDetalle(prev => prev ? {
+          ...prev, estado: 'anulada', motivo_anulacion: motivo, anulada_en: new Date().toISOString(),
+          anulador: { nombre_completo: profile?.nombre_completo },
+        } : null);
       }
-      setFacturaToAnular(null);
     } catch (error) {
-      toast.error('Error al anular la factura: ' + error.message);
-    } finally {
-      setAnulando(false);
+      toast.error('Error al anular la factura: ' + mensajeError(error));
     }
   }
 
@@ -118,10 +131,11 @@ export default function HistorialFacturas() {
     try {
       let detalles = factura.detalles;
       if (!detalles || detalles.length === 0) {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('detalles_factura')
           .select('*')
           .eq('factura_id', factura.id);
+        if (error) throw error;
         detalles = data || [];
       }
       const ticketData = {
@@ -134,9 +148,14 @@ export default function HistorialFacturas() {
       };
       setShowTicket(ticketData);
     } catch (e) {
-      toast.error('Error al preparar impresión: ' + e.message);
+      toast.error('Error al preparar impresión: ' + mensajeError(e));
     }
   }
+
+  // Rango inválido: se avisa y no se aplica el filtro de fechas
+  const errorRango = validarRango(filtroFechaDesde, filtroFechaHasta);
+  const desdeValido = errorRango ? '' : filtroFechaDesde;
+  const hastaValido = errorRango ? '' : filtroFechaHasta;
 
   const facturasFiltradas = facturas.filter(f => {
     const matchSearch = !search ||
@@ -148,8 +167,10 @@ export default function HistorialFacturas() {
         (m.referencia && m.referencia.toLowerCase().includes(search.toLowerCase()))
       );
     const matchEstado = !filtroEstado || f.estado === filtroEstado;
-    const matchDesde = !filtroFechaDesde || new Date(f.fecha_emision) >= new Date(filtroFechaDesde);
-    const matchHasta = !filtroFechaHasta || new Date(f.fecha_emision) <= new Date(filtroFechaHasta + 'T23:59:59');
+    // Día de emisión en hora de Venezuela (new Date('AAAA-MM-DD') se interpreta en UTC)
+    const diaEmision = diaCaracas(f.fecha_emision);
+    const matchDesde = !desdeValido || diaEmision >= desdeValido;
+    const matchHasta = !hastaValido || diaEmision <= hastaValido;
     return matchSearch && matchEstado && matchDesde && matchHasta;
   });
 
@@ -187,9 +208,14 @@ export default function HistorialFacturas() {
           <option value="emitida">Emitida</option>
           <option value="anulada">Anulada</option>
         </select>
-        <input type="date" value={filtroFechaDesde} onChange={e => setFiltroFechaDesde(e.target.value)} />
-        <input type="date" value={filtroFechaHasta} onChange={e => setFiltroFechaHasta(e.target.value)} />
+        <input type="date" max={filtroFechaHasta || hoyLocal()} value={filtroFechaDesde} onChange={e => setFiltroFechaDesde(e.target.value)} title="Desde" />
+        <input type="date" min={filtroFechaDesde || undefined} max={hoyLocal()} value={filtroFechaHasta} onChange={e => setFiltroFechaHasta(e.target.value)} title="Hasta" />
       </div>
+      {errorRango && (
+        <p className="text-danger" role="alert" style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
+          {errorRango}. No se aplicó el filtro de fechas.
+        </p>
+      )}
 
       <div className="card">
         <div className="table-container">
@@ -235,8 +261,8 @@ export default function HistorialFacturas() {
                         {f.estado === 'emitida' && (
                           <>
                             <button className="btn btn--ghost btn--xs" onClick={() => imprimirFactura(f)} title="Imprimir Ticket"><HiOutlinePrinter /></button>
-                            {esDeHoy(f) && (
-                              <button className="btn btn--ghost btn--xs text-danger" onClick={() => setFacturaToAnular(f)} title="Anular Factura (solo el mismo día)"><HiOutlineXCircle /></button>
+                            {puedeAnular && esDeHoy(f) && (
+                              <button className="btn btn--ghost btn--xs text-danger" onClick={() => anularFactura(f)} title="Anular Factura (solo el mismo día)"><HiOutlineXCircle /></button>
                             )}
                           </>
                         )}
@@ -273,22 +299,34 @@ export default function HistorialFacturas() {
                 <p><strong>Vendedor:</strong> {showDetalle.usuarios?.nombre_completo}</p>
               </div>
               <p><strong>Fecha:</strong> {formatFecha(showDetalle.fecha_emision, true)}</p>
+              {showDetalle.estado === 'anulada' && (
+                <div style={{ border: '1px solid rgba(239, 68, 68, 0.4)', background: 'rgba(239, 68, 68, 0.08)', borderRadius: 8, padding: '0.75rem 1rem' }}>
+                  <p style={{ color: '#ef4444', fontWeight: 600 }}>Factura anulada</p>
+                  <p><strong>Motivo:</strong> {showDetalle.motivo_anulacion || 'Sin motivo registrado'}</p>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    {showDetalle.anulada_en && formatFecha(showDetalle.anulada_en, true)}
+                    {showDetalle.anulador?.nombre_completo && ` · por ${showDetalle.anulador.nombre_completo}`}
+                  </p>
+                </div>
+              )}
               <p><strong>Tasa:</strong> {formatTasa(showDetalle.tasas_cambio?.tasa_usd_bs)}</p>
 
               <h4 style={{ marginTop: '1rem' }}>Productos</h4>
-              <table className="table">
-                <thead><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th>Subtotal</th></tr></thead>
-                <tbody>
-                  {(showDetalle.detalles || []).map(d => (
-                    <tr key={d.id}>
-                      <td>{d.producto_nombre}</td>
-                      <td>{d.cantidad}</td>
-                      <td>{formatMonto(d.precio_unitario_usd, tasaDocumento(showDetalle))}</td>
-                      <td>{formatMonto(d.subtotal_usd || d.cantidad * d.precio_unitario_usd, tasaDocumento(showDetalle))}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="table-container">
+                <table className="table">
+                  <thead><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th>Subtotal</th></tr></thead>
+                  <tbody>
+                    {(showDetalle.detalles || []).map(d => (
+                      <tr key={d.id}>
+                        <td>{d.producto_nombre}</td>
+                        <td>{d.cantidad}</td>
+                        <td>{formatMonto(d.precio_unitario_usd, tasaDocumento(showDetalle))}</td>
+                        <td>{formatMonto(d.subtotal_usd || d.cantidad * d.precio_unitario_usd, tasaDocumento(showDetalle))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
               <div className="pos-totals" style={{ marginTop: '1rem' }}>
                 <div className="pos-totals__row pos-totals__row--total"><span>Total Bs:</span><span>{formatBs(showDetalle.total_bs)}</span></div>
@@ -391,20 +429,20 @@ export default function HistorialFacturas() {
 
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.6rem' }}>
                         {/* Tarjeta Inicial */}
-                        <div style={{ background: 'rgba(0, 0, 0, 0.25)', padding: '0.65rem 0.75rem', borderRadius: '6px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
-                          <div style={{ fontSize: '0.72rem', color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        <div style={{ background: 'var(--bg-elevated)', padding: '0.65rem 0.75rem', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                             Inicial Pagada (en Tienda)
                           </div>
                           <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#10B981', marginTop: '2px' }}>
                             {formatMonto(totalInicialUSD, tasaValor)}
                           </div>
                           {totalInicialBs > 0 && (
-                            <div style={{ fontSize: '0.75rem', color: '#aaa' }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                               Ref. {formatDolares(totalInicialUSD)}
                             </div>
                           )}
-                          <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.4rem' }}>
-                            <strong style={{ color: '#ddd' }}>Métodos de la Inicial:</strong>
+                          <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', borderTop: '1px solid var(--border)', paddingTop: '0.4rem' }}>
+                            <strong style={{ color: 'var(--text-primary)' }}>Métodos de la Inicial:</strong>
                             {desgloseInicial.map((di, idx) => {
                               const diUSD = parseFloat(di.monto_usd || 0);
                               const diBs = di.monto_bs !== undefined && di.monto_bs !== null && Number(di.monto_bs) > 0
@@ -413,7 +451,7 @@ export default function HistorialFacturas() {
                               const isBs = esMetodoEnBs(di);
 
                               return (
-                                <div key={idx} style={{ color: '#ccc', marginTop: '2px' }}>
+                                <div key={idx} style={{ color: 'var(--text-secondary)', marginTop: '2px' }}>
                                   • <strong>{di.metodo}:</strong> {isBs ? `${formatBs(diBs)} (Ref. ${formatDolares(diUSD)})` : `${formatMonto(diUSD, tasaValor)} (Ref. ${formatDolares(diUSD)})`}
                                   {di.referencia ? ` (N° Op: ${di.referencia})` : ''}
                                   {di.titular ? ` (Emisor: ${di.titular})` : ''}
@@ -432,11 +470,11 @@ export default function HistorialFacturas() {
                             {debiendoBs > 0 ? formatBs(debiendoBs) : formatMonto(debiendoUSD, tasaValor)}
                           </div>
                           {debiendoBs > 0 && (
-                            <div style={{ fontSize: '0.75rem', color: '#aaa' }}>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                               Ref. {formatDolares(debiendoUSD)}
                             </div>
                           )}
-                          <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: '#aaa', fontStyle: 'italic' }}>
+                          <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>
                             * Saldo por pagar en cuotas mediante App Cashea
                           </div>
                         </div>
@@ -462,7 +500,7 @@ export default function HistorialFacturas() {
                       <div key={i} className="pos-totals__row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span>{mp.metodo} {extraInfo.length > 0 ? `(${extraInfo.join(' | ')})` : ''}</span>
                         <span style={{ fontWeight: 'bold' }}>
-                          {formatBs(montoBs)} <small style={{ color: '#aaa', fontWeight: 'normal' }}>(Ref. {formatDolares(montoUSD)})</small>
+                          {formatBs(montoBs)} <small style={{ color: 'var(--text-secondary)', fontWeight: 'normal' }}>(Ref. {formatDolares(montoUSD)})</small>
                         </span>
                       </div>
                     );
@@ -472,7 +510,7 @@ export default function HistorialFacturas() {
                     <div key={i} className="pos-totals__row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span>{mp.metodo} {extraInfo.length > 0 ? `(${extraInfo.join(' | ')})` : ''}</span>
                       <span style={{ fontWeight: 'bold' }}>
-                        {formatMonto(montoUSD, tasaValor)} {montoBs > 0 ? <small style={{ color: '#aaa', fontWeight: 'normal' }}>(Ref. {formatDolares(montoUSD)})</small> : ''}
+                        {formatMonto(montoUSD, tasaValor)} {montoBs > 0 ? <small style={{ color: 'var(--text-secondary)', fontWeight: 'normal' }}>(Ref. {formatDolares(montoUSD)})</small> : ''}
                       </span>
                     </div>
                   );
@@ -509,8 +547,8 @@ export default function HistorialFacturas() {
                         <button className="btn btn--secondary" onClick={() => setNotaAEmitir('DEBITO')}>Nota de débito</button>
                       </>
                     )}
-                    {esDeHoy(showDetalle) && (showDetalle.notas || []).length === 0 && (
-                      <button className="btn btn--ghost text-danger" onClick={() => setFacturaToAnular(showDetalle)}>
+                    {puedeAnular && esDeHoy(showDetalle) && (showDetalle.notas || []).length === 0 && (
+                      <button className="btn btn--ghost text-danger" onClick={() => anularFactura(showDetalle)}>
                         <HiOutlineXCircle /> Anular Factura
                       </button>
                     )}
@@ -535,18 +573,6 @@ export default function HistorialFacturas() {
         />
       )}
 
-      {/* Confirmation Modal for Voiding Invoices */}
-      <ConfirmModal
-        isOpen={!!facturaToAnular}
-        title={`¿Anular Factura ${facturaToAnular?.numero_factura}?`}
-        message="El estado de la factura pasará a ANULADA y el stock de todos los productos incluidos será devuelto automáticamente al inventario. Esta acción es irreversible."
-        confirmText="Sí, Anular Factura"
-        cancelText="Volver"
-        variant="danger"
-        loading={anulando}
-        onConfirm={handleConfirmAnular}
-        onCancel={() => !anulando && setFacturaToAnular(null)}
-      />
     </div>
   );
 }

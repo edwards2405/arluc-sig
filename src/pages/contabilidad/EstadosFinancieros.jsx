@@ -1,10 +1,9 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   HiOutlineDocumentChartBar,
   HiOutlineScale,
   HiOutlineArrowTrendingUp,
   HiOutlineArrowTrendingDown,
-  HiOutlineCalendar,
   HiOutlinePrinter,
   HiOutlineDocumentArrowDown,
   HiOutlineArrowPath,
@@ -16,6 +15,8 @@ import toast from 'react-hot-toast';
 import { fetchEstadosFinancieros } from '../../services/contabilidadService';
 import { exportarExcel, imprimirReporte } from '../../utils/reportes';
 import { formatFecha as formatearFecha } from '../../utils/formatters';
+import { hoyLocal, validarRango } from '../../utils/validaciones';
+import { mensajeError } from '../../utils/errores';
 
 export default function EstadosFinancieros() {
   const [activeTab, setActiveTab] = useState('resultados'); // 'resultados' | 'balance'
@@ -60,7 +61,14 @@ export default function EstadosFinancieros() {
     },
   });
 
+  const errorRango = validarRango(fechaDesde, fechaHasta);
+
   const loadData = useCallback(async () => {
+    // Rango inválido: se muestra el error y no se consulta
+    if (validarRango(fechaDesde, fechaHasta)) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetchEstadosFinancieros({
@@ -69,7 +77,7 @@ export default function EstadosFinancieros() {
       });
       setData(res);
     } catch (err) {
-      toast.error('Error al generar estados financieros: ' + err.message);
+      toast.error('Error al generar estados financieros: ' + mensajeError(err));
     } finally {
       setLoading(false);
     }
@@ -105,20 +113,17 @@ export default function EstadosFinancieros() {
   const tPasivoPatrimonio = esVes ? bg.totalPasivoPatrimonioVes : bg.totalPasivoPatrimonio;
   const uEjercicio = esVes ? bg.utilidadEjercicioVes : bg.utilidadEjercicio;
 
-  // Filtros rápidos
+  // Filtros rápidos (hasta hoy: no se permiten fechas futuras)
   const setMesActual = () => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    setFechaDesde(`${y}-${m}-01`);
-    const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
-    setFechaHasta(`${y}-${m}-${lastDay}`);
+    const hoy = hoyLocal();
+    setFechaDesde(`${hoy.slice(0, 8)}01`);
+    setFechaHasta(hoy);
   };
 
   const setAnoActual = () => {
-    const y = new Date().getFullYear();
-    setFechaDesde(`${y}-01-01`);
-    setFechaHasta(`${y}-12-31`);
+    const hoy = hoyLocal();
+    setFechaDesde(`${hoy.slice(0, 4)}-01-01`);
+    setFechaHasta(hoy);
   };
 
   const limpiarFiltros = () => {
@@ -193,7 +198,7 @@ export default function EstadosFinancieros() {
       await exportarExcel(construirReporte());
       toast.success('Excel generado');
     } catch (e) {
-      toast.error('No se pudo generar el Excel: ' + e.message);
+      toast.error('No se pudo generar el Excel: ' + mensajeError(e));
     }
   };
 
@@ -363,6 +368,7 @@ export default function EstadosFinancieros() {
             <input
               type="date"
               value={fechaDesde}
+              max={fechaHasta || hoyLocal()}
               onChange={(e) => setFechaDesde(e.target.value)}
               className="form-control text-sm w-full"
               style={{
@@ -382,6 +388,8 @@ export default function EstadosFinancieros() {
             <input
               type="date"
               value={fechaHasta}
+              min={fechaDesde || undefined}
+              max={hoyLocal()}
               onChange={(e) => setFechaHasta(e.target.value)}
               className="form-control text-sm w-full"
               style={{
@@ -425,7 +433,11 @@ export default function EstadosFinancieros() {
         </div>
       </div>
 
-      {loading ? (
+      {errorRango ? (
+        <div className="card text-danger" role="alert" style={{ padding: '1rem', fontSize: '0.9rem' }}>
+          {errorRango}. Corrija el rango de fechas para generar los estados financieros.
+        </div>
+      ) : loading ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <div className="loading-spinner mb-4" />
           <p style={{ color: 'var(--text-secondary)' }}>Generando estados financieros consolidados...</p>

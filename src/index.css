@@ -1674,6 +1674,18 @@ a:hover { color: var(--primary-hover); }
   transition: var(--transition);
 }
 
+.pos-nuevo-cliente select {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.5rem;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.pos-nuevo-cliente select:focus,
 .pos-nuevo-cliente input:focus {
   outline: none;
   border-color: var(--border-focus);

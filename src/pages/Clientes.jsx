@@ -10,6 +10,13 @@ import {
 } from 'react-icons/hi2';
 import { FaWhatsapp, FaPhone } from 'react-icons/fa';
 import ConfirmModal from '../components/common/ConfirmModal';
+import { CampoDocumento, CampoTelefono } from '../components/common/CamposVenezuela';
+import { useDialogo } from '../components/common/DialogoProvider';
+import {
+  tieneTexto, normalizarDocumento, validarDocumento, normalizarTelefono, validarTelefono, validarCorreo,
+} from '../utils/validaciones';
+import { puede } from '../utils/permisos';
+import { mensajeError, exigirFilas } from '../utils/errores';
 
 const MONEDAS_CREDITO = [
   { id: 'usd', label: 'USD (Dólares)' },
@@ -20,6 +27,11 @@ export default function Clientes() {
   const { profile } = useAuth();
   // Las condiciones de crédito las gestionan admin y gerente (la BD lo valida)
   const isAdmin = ['admin', 'gerente'].includes(profile?.rol);
+  // La condición de contribuyente especial la fijan admin, gerente y contador (la BD lo valida)
+  const puedeFiscal = ['admin', 'gerente', 'contador'].includes(profile?.rol);
+  const puedeEliminar = puede(profile?.rol, 'cliente.eliminar');
+  const { confirmar } = useDialogo();
+  const [errores, setErrores] = useState({});
 
   const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -47,33 +59,85 @@ export default function Clientes() {
   async function loadClientes() {
     setLoading(true);
     const { data, error } = await supabase.from('clientes').select('*').order('nombre');
-    if (error) toast.error('Error cargando clientes: ' + error.message);
+    if (error) toast.error('Error cargando clientes: ' + mensajeError(error));
     setClientes(data || []);
     setLoading(false);
   }
 
+  /** Valida las condiciones de crédito; devuelve un mensaje de error o null. */
+  function errorCredito(linea, activo) {
+    const n = Number(linea);
+    if (!Number.isFinite(n) || n < 0) return 'El límite de crédito debe ser un número mayor o igual a 0';
+    if (activo && n <= 0) return 'Para activar el crédito, el límite debe ser mayor que 0';
+    return null;
+  }
+
+  /** Si el nuevo límite (USD) queda por debajo de la deuda pendiente, pide confirmación. */
+  async function confirmarLimiteBajoDeuda(cliente, linea, moneda) {
+    if (!cliente || moneda !== 'usd') return true;
+    const { data: saldo, error } = await supabase.rpc('saldo_credito_cliente', { p_cliente_id: cliente.id });
+    if (error || !(Number(saldo) > Number(linea))) return true;
+    return confirmar({
+      titulo: 'Límite por debajo de la deuda',
+      mensaje: `${cliente.nombre} debe ${formatMonto(saldo)} a crédito y el nuevo límite es ${formatMonto(linea)}. No podrá comprar a crédito hasta que su deuda baje del límite. ¿Desea continuar?`,
+      variante: 'warning',
+      textoConfirmar: 'Sí, guardar',
+    });
+  }
+
+  function validarFormulario() {
+    const errs = {};
+    if (!tieneTexto(form.nombre)) errs.nombre = 'El nombre es obligatorio';
+    const errDoc = validarDocumento(form.documento_identidad);
+    if (errDoc) errs.documento_identidad = errDoc;
+    const errTel = validarTelefono(form.telefono);
+    if (errTel) errs.telefono = errTel;
+    const errCorreo = validarCorreo(form.email);
+    if (errCorreo) errs.email = errCorreo;
+    if (puedeFiscal && form.contribuyente_especial) {
+      if (!errDoc && !/^[JG]-/.test(normalizarDocumento(form.documento_identidad))) {
+        errs.documento_identidad = 'Un contribuyente especial debe tener RIF jurídico (J) o gubernamental (G)';
+      } else if (!errDoc && validarDocumento(form.documento_identidad, { soloRif: true })) {
+        errs.documento_identidad = validarDocumento(form.documento_identidad, { soloRif: true });
+      }
+      if (![75, 100].includes(Number(form.porcentaje_retencion_iva))) errs.porcentaje_retencion_iva = 'El porcentaje de retención debe ser 75 o 100';
+    }
+    if (isAdmin) {
+      const errCred = errorCredito(form.linea_credito, form.credito_activo);
+      if (errCred) errs.linea_credito = errCred;
+    }
+    setErrores(errs);
+    return Object.keys(errs).length === 0;
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
+    if (!validarFormulario()) return;
     try {
+      if (isAdmin && editando && !(await confirmarLimiteBajoDeuda(editando, form.linea_credito, form.moneda_credito))) return;
       const payload = {
-        nombre: form.nombre,
-        documento_identidad: form.documento_identidad,
-        telefono: form.telefono,
-        direccion: form.direccion,
-        email: form.email,
-        contribuyente_especial: !!form.contribuyente_especial,
-        porcentaje_retencion_iva: Number(form.porcentaje_retencion_iva) || 75,
+        nombre: form.nombre.trim(),
+        documento_identidad: normalizarDocumento(form.documento_identidad),
+        telefono: tieneTexto(form.telefono) ? normalizarTelefono(form.telefono) : null,
+        direccion: form.direccion.trim() || null,
+        email: form.email.trim().toLowerCase() || null,
+        // Contribuyente especial: solo admin/gerente/contador (la BD lo valida)
+        ...(puedeFiscal && {
+          contribuyente_especial: !!form.contribuyente_especial,
+          porcentaje_retencion_iva: Number(form.porcentaje_retencion_iva) === 100 ? 100 : 75,
+        }),
         // Las condiciones de crédito solo las fija admin/gerente (la BD lo valida)
         ...(isAdmin && {
-          linea_credito: parseFloat(form.linea_credito) || 0,
+          linea_credito: Number(form.linea_credito) || 0,
           credito_activo: !!form.credito_activo,
           moneda_credito: form.moneda_credito,
         }),
       };
 
       if (editando) {
-        const { error } = await supabase.from('clientes').update(payload).eq('id', editando.id);
+        const { data, error } = await supabase.from('clientes').update(payload).eq('id', editando.id).select('id');
         if (error) throw error;
+        exigirFilas(data);
         toast.success('Cliente actualizado');
       } else {
         const { error } = await supabase.from('clientes').insert(payload);
@@ -85,28 +149,32 @@ export default function Clientes() {
       resetForm();
       loadClientes();
     } catch (error) {
-      toast.error(error.message);
+      toast.error(mensajeError(error, 'Error al guardar el cliente'));
     }
   }
 
   async function handleSaveCredito(e) {
     e.preventDefault();
     if (!creditoCliente || !isAdmin) return;
+    const errCred = errorCredito(creditoForm.linea_credito, creditoForm.credito_activo);
+    if (errCred) { toast.error(errCred); return; }
     setSavingCredito(true);
     try {
-      const { error } = await supabase.from('clientes').update({
-        linea_credito: parseFloat(creditoForm.linea_credito) || 0,
+      if (!(await confirmarLimiteBajoDeuda(creditoCliente, creditoForm.linea_credito, creditoForm.moneda_credito))) return;
+      const { data, error } = await supabase.from('clientes').update({
+        linea_credito: Number(creditoForm.linea_credito) || 0,
         credito_activo: creditoForm.credito_activo,
         moneda_credito: creditoForm.moneda_credito,
-      }).eq('id', creditoCliente.id);
+      }).eq('id', creditoCliente.id).select('id');
       if (error) throw error;
+      exigirFilas(data);
 
       toast.success('Línea de crédito actualizada');
       setShowCreditoModal(false);
       setCreditoCliente(null);
       loadClientes();
     } catch (err) {
-      toast.error(err.message);
+      toast.error(mensajeError(err, 'Error al guardar la línea de crédito'));
     } finally {
       setSavingCredito(false);
     }
@@ -116,15 +184,21 @@ export default function Clientes() {
     if (!isAdmin) return;
     try {
       const nuevoEstado = !cliente.credito_activo;
-      const { error } = await supabase.from('clientes')
+      if (nuevoEstado && !(Number(cliente.linea_credito) > 0)) {
+        toast.error('Asigne primero un límite de crédito mayor que 0');
+        return;
+      }
+      const { data, error } = await supabase.from('clientes')
         .update({ credito_activo: nuevoEstado })
-        .eq('id', cliente.id);
+        .eq('id', cliente.id)
+        .select('id');
       if (error) throw error;
+      exigirFilas(data);
 
       toast.success(nuevoEstado ? `Crédito activado para ${cliente.nombre}` : `Crédito desactivado para ${cliente.nombre}`);
       loadClientes();
     } catch (err) {
-      toast.error(err.message);
+      toast.error(mensajeError(err, 'Error al cambiar el crédito'));
     }
   }
 
@@ -132,25 +206,30 @@ export default function Clientes() {
     if (!clienteToDelete) return;
     setDeleting(true);
     try {
-      await supabase.from('facturas').update({ cliente_id: null }).eq('cliente_id', clienteToDelete.id);
-      const { error } = await supabase.from('clientes').delete().eq('id', clienteToDelete.id);
+      // La BD impide borrar un cliente con facturas, notas o cuentas por cobrar
+      const { data, error } = await supabase.from('clientes').delete().eq('id', clienteToDelete.id).select('id');
       if (error) throw error;
+      exigirFilas(data, 'No se eliminó el cliente: no tiene permiso o ya no existe.');
       toast.success(`Cliente "${clienteToDelete.nombre}" eliminado`);
       setClienteToDelete(null);
       loadClientes();
     } catch (err) {
-      toast.error(err.message || 'Error al eliminar el cliente');
+      toast.error(err.code === '23503'
+        ? `No se puede eliminar a "${clienteToDelete.nombre}": tiene facturas u otros documentos registrados.`
+        : mensajeError(err, 'Error al eliminar el cliente'));
     } finally {
       setDeleting(false);
     }
   }
 
   function resetForm() {
+    setErrores({});
     setForm({ nombre: '', documento_identidad: '', telefono: '', direccion: '', email: '', linea_credito: 0, credito_activo: false, moneda_credito: 'usd', contribuyente_especial: false, porcentaje_retencion_iva: 75 });
   }
 
   function editarCliente(cliente) {
     setEditando(cliente);
+    setErrores({});
     setForm({
       nombre: cliente.nombre,
       documento_identidad: cliente.documento_identidad,
@@ -279,7 +358,9 @@ export default function Clientes() {
                           </button>
                         </>
                       )}
-                      <button className="btn btn--ghost btn--xs text-danger" onClick={() => setClienteToDelete(c)} title="Eliminar Cliente"><HiOutlineTrash /></button>
+                      {puedeEliminar && (
+                        <button className="btn btn--ghost btn--xs text-danger" onClick={() => setClienteToDelete(c)} title="Eliminar Cliente"><HiOutlineTrash /></button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -309,21 +390,32 @@ export default function Clientes() {
               <div className="form-group">
                 <label>Nombre Completo</label>
                 <input value={form.nombre} onChange={e => setForm({ ...form, nombre: e.target.value })} required />
+                {errores.nombre && <small style={{ color: '#ef4444' }}>{errores.nombre}</small>}
               </div>
               <div className="form-row">
                 <div className="form-group">
                   <label>Cédula / RIF</label>
-                  <input value={form.documento_identidad} onChange={e => setForm({ ...form, documento_identidad: e.target.value })} required />
+                  <CampoDocumento
+                    value={form.documento_identidad}
+                    onChange={(v) => setForm(f => ({ ...f, documento_identidad: v }))}
+                    required
+                  />
+                  {errores.documento_identidad && <small style={{ color: '#ef4444' }}>{errores.documento_identidad}</small>}
                 </div>
                 <div className="form-group">
                   <label>Teléfono</label>
-                  <input value={form.telefono} onChange={e => setForm({ ...form, telefono: e.target.value })} />
+                  <CampoTelefono
+                    value={form.telefono}
+                    onChange={(v) => setForm(f => ({ ...f, telefono: v }))}
+                  />
+                  {errores.telefono && <small style={{ color: '#ef4444' }}>{errores.telefono}</small>}
                 </div>
               </div>
               <div className="form-row">
                 <div className="form-group">
                   <label>Email</label>
                   <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+                  {errores.email && <small style={{ color: '#ef4444' }}>{errores.email}</small>}
                 </div>
                 <div className="form-group">
                   <label>Dirección</label>
@@ -347,6 +439,7 @@ export default function Clientes() {
                           onChange={e => setForm({ ...form, linea_credito: e.target.value })}
                         />
                         {form.moneda_credito === 'usd' && Number(form.linea_credito) > 0 && <small>≈ {formatMonto(form.linea_credito)}</small>}
+                        {errores.linea_credito && <small style={{ color: '#ef4444' }}>{errores.linea_credito}</small>}
                       </div>
                       <div className="form-group">
                         <label>Moneda del Crédito</label>
@@ -368,6 +461,7 @@ export default function Clientes() {
                 </>
               )}
 
+              {puedeFiscal ? (
               <div className="form-row" style={{ alignItems: 'flex-end' }}>
                 <div className="form-group" style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
                   <input
@@ -387,9 +481,17 @@ export default function Clientes() {
                       <option value={75}>75 % (general)</option>
                       <option value={100}>100 %</option>
                     </select>
+                    {errores.porcentaje_retencion_iva && <small style={{ color: '#ef4444' }}>{errores.porcentaje_retencion_iva}</small>}
                   </div>
                 )}
               </div>
+              ) : (
+                editando?.contribuyente_especial && (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>
+                    Contribuyente especial (retención {editando.porcentaje_retencion_iva || 75} %). Solo admin, gerente o contador pueden cambiarlo.
+                  </p>
+                )
+              )}
 
               <button type="submit" className="btn btn--primary btn--full">{editando ? 'Guardar' : 'Crear Cliente'}</button>
             </form>
@@ -458,9 +560,9 @@ export default function Clientes() {
                 </button>
               </div>
 
-              {parseFloat(creditoForm.linea_credito) === 0 && (
-                <p style={{ fontSize: '0.78rem', color: 'var(--warning, #F59E0B)', margin: '0.25rem 0 0' }}>
-                  ⚠️ Límite en 0: el cliente podrá usar crédito sin restricción de monto.
+              {!(Number(creditoForm.linea_credito) > 0) && (
+                <p style={{ fontSize: '0.78rem', color: creditoForm.credito_activo ? '#ef4444' : 'var(--warning, #F59E0B)', margin: '0.25rem 0 0' }}>
+                  ⚠️ Límite en 0: el cliente no puede comprar a crédito. Para activar el crédito asigne un límite mayor que 0.
                 </p>
               )}
 
@@ -475,7 +577,7 @@ export default function Clientes() {
       <ConfirmModal
         isOpen={!!clienteToDelete}
         title={`¿Eliminar al cliente "${clienteToDelete?.nombre}"?`}
-        message="Las facturas emitidas a este cliente se conservarán en el historial como registro contable, desvinculando la referencia al cliente eliminado."
+        message="Solo se puede eliminar un cliente sin facturas, notas ni cuentas por cobrar. Si tiene documentos registrados, el sistema no permitirá eliminarlo para conservar el registro contable."
         confirmText="Sí, Eliminar Cliente"
         cancelText="Cancelar"
         variant="danger"

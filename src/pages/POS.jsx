@@ -4,6 +4,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { METODOS_PAGO, METODOS_INICIAL_CASHEA } from '../utils/constants';
 import { formatTasa, formatMonto, formatFecha } from '../utils/formatters';
 import toast from 'react-hot-toast';
+import { validarReferencia } from '../utils/validaciones';
+import { mensajeError } from '../utils/errores';
+import { useDialogo } from '../components/common/DialogoProvider';
 import { sincronizarTasaBCV } from '../services/bcvService';
 import { HiOutlineArrowPath } from 'react-icons/hi2';
 
@@ -16,6 +19,7 @@ import POSPaymentSection from '../components/pos/POSPaymentSection';
 import POSInvoiceSuccess from '../components/pos/POSInvoiceSuccess';
 
 export default function POS() {
+  const { confirmar } = useDialogo();
   const { profile } = useAuth();
 
   // Multi-Cuenta / Multi-Cliente simultáneo en Caja
@@ -46,7 +50,7 @@ export default function POS() {
     try {
       const savedId = localStorage.getItem('arluc_pos_cuenta_activa');
       if (savedId) return savedId;
-    } catch (e) {}
+    } catch { /* almacenamiento no disponible */ }
     return cuentas[0]?.id || '1';
   });
 
@@ -55,7 +59,7 @@ export default function POS() {
     try {
       localStorage.setItem('arluc_pos_cuentas', JSON.stringify(cuentas));
       localStorage.setItem('arluc_pos_cuenta_activa', cuentaActivaId);
-    } catch (e) {}
+    } catch { /* almacenamiento no disponible */ }
   }, [cuentas, cuentaActivaId]);
 
   // Cuenta activa actual
@@ -117,6 +121,7 @@ export default function POS() {
 
   // Tasa de cambio
   const [tasaHoy, setTasaHoy] = useState(null);
+  const [errorTasa, setErrorTasa] = useState(null);
 
   // Resultado de factura
   const [facturaEmitida, setFacturaEmitida] = useState(null);
@@ -133,13 +138,13 @@ export default function POS() {
     toast.success(`Abierta Cuenta #${num}`);
   }
 
-  function cerrarCuenta(idToClose, e) {
+  async function cerrarCuenta(idToClose, e) {
     if (e) e.stopPropagation();
     const c = cuentas.find((item) => item.id === idToClose);
     if (!c) return;
 
     if (c.carrito && c.carrito.length > 0) {
-      if (!window.confirm(`La cuenta tiene ${c.carrito.length} productos en el carrito. ¿Seguro que deseas cerrarla?`)) {
+      if (!(await confirmar({ titulo: 'Cerrar cuenta', mensaje: `La cuenta tiene ${c.carrito.length} productos en el carrito. ¿Seguro que desea cerrarla?`, variante: 'danger', textoConfirmar: 'Cerrar cuenta' }))) {
         return;
       }
     }
@@ -159,13 +164,13 @@ export default function POS() {
   }
 
   // Limpiar caja / Cancelar compra en la cuenta activa
-  function limpiarCajaActual() {
+  async function limpiarCajaActual() {
     if (carrito.length === 0 && !clienteSeleccionado) {
       toast('Esta cuenta ya está vacía', { icon: 'ℹ️' });
       return;
     }
 
-    if (!window.confirm('¿Deseas limpiar todos los productos y cliente de esta cuenta?')) {
+    if (!(await confirmar({ titulo: 'Limpiar caja', mensaje: '¿Desea quitar todos los productos y el cliente de esta cuenta?', variante: 'danger', textoConfirmar: 'Limpiar' }))) {
       return;
     }
 
@@ -206,13 +211,19 @@ export default function POS() {
 
   // Tasa vigente HOY (puede existir ya la del día siguiente si el BCV la adelantó)
   async function loadTasaHoy() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('tasas_cambio')
       .select('*')
       .lte('fecha_registro', new Date().toLocaleDateString('en-CA'))
       .order('fecha_registro', { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (error) {
+      // Falla de consulta: se conserva la tasa ya cargada y se informa el motivo real
+      setErrorTasa(mensajeError(error));
+      return;
+    }
+    setErrorTasa(null);
     setTasaHoy(data);
   }
 
@@ -227,7 +238,7 @@ export default function POS() {
         toast.success('Tasa BCV al día', { id: 'bcv-sync' });
       }
     } catch (e) {
-      toast.error(`Error al sincronizar BCV: ${e.message}`, { id: 'bcv-sync' });
+      toast.error(`Error al sincronizar BCV: ${mensajeError(e)}`, { id: 'bcv-sync' });
     }
   }
 
@@ -238,11 +249,21 @@ export default function POS() {
       setClienteResults([]);
       return;
     }
-    const { data } = await supabase
+    // Comas, paréntesis y comillas rompen el filtro .or() de PostgREST; % y _ son comodines
+    const texto = query.replace(/[,()"'\\%_*]/g, ' ').trim();
+    if (texto.length < 2) {
+      setClienteResults([]);
+      return;
+    }
+    const { data, error } = await supabase
       .from('clientes')
       .select('*')
-      .or(`nombre.ilike.%${query}%,documento_identidad.ilike.%${query}%`)
+      .or(`nombre.ilike.%${texto}%,documento_identidad.ilike.%${texto}%`)
       .limit(5);
+    if (error) {
+      toast.error('Error al buscar clientes: ' + mensajeError(error));
+      return;
+    }
     const enriquecidos = data || [];
     setClienteResults(enriquecidos);
   }
@@ -262,7 +283,7 @@ export default function POS() {
       setNuevoCliente({ nombre: '', documento_identidad: '', telefono: '' });
       toast.success('Cliente creado');
     } catch (error) {
-      toast.error(error.message);
+      toast.error(mensajeError(error));
     }
   }
 
@@ -462,8 +483,12 @@ export default function POS() {
       toast.error('Carrito vacío');
       return;
     }
+    if (!clienteSeleccionado) {
+      toast.error('Seleccione o registre el cliente antes de cobrar');
+      return;
+    }
     if (!tasaHoy) {
-      toast.error('Registre la tasa del día primero');
+      toast.error(errorTasa ? `No se pudo consultar la tasa de cambio: ${errorTasa}` : 'Registre la tasa del día primero');
       return;
     }
     setShowPago(true);
@@ -483,13 +508,13 @@ export default function POS() {
       return;
     }
     if (!tasaHoy) {
-      toast.error('No hay tasa de cambio registrada');
+      toast.error(errorTasa ? `No se pudo consultar la tasa de cambio: ${errorTasa}` : 'No hay tasa de cambio registrada');
       return;
     }
 
-    // Si hay pago a crédito, el cliente es obligatorio
-    if (tieneCredito && !clienteSeleccionado) {
-      toast.error('Para ventas a crédito debe seleccionar un cliente');
+    // Toda factura identifica al comprador (nombre y cédula o RIF)
+    if (!clienteSeleccionado) {
+      toast.error('Seleccione o registre el cliente antes de facturar');
       return;
     }
 
@@ -512,6 +537,11 @@ export default function POS() {
           toast.error('Ingrese el correo del emisor de Zelle');
           return;
         }
+        const errorRef = validarReferencia(mp.referencia);
+        if (errorRef) {
+          toast.error(`Zelle: ${errorRef}`);
+          return;
+        }
       } else if (mp.metodo === 'cashea') {
         if (!mp.referencia?.trim()) {
           toast.error('Ingrese el N° de orden / comprobante Cashea');
@@ -521,9 +551,18 @@ export default function POS() {
           toast.error('Ingrese el monto de la inicial pagada en Cashea');
           return;
         }
+        const metodoInicial = METODOS_INICIAL_CASHEA.find((m) => m.id === (mp.cashea_metodo_inicial || 'punto_venta'));
+        if (metodoInicial?.requiereReferencia) {
+          const errorRef = validarReferencia(mp.cashea_referencia_inicial);
+          if (errorRef) {
+            toast.error(`Inicial Cashea (${metodoInicial.label}): ${errorRef}`);
+            return;
+          }
+        }
       } else if (METODOS_PAGO.find((m) => m.id === mp.metodo)?.requiereReferencia) {
-        if (!mp.referencia?.trim()) {
-          toast.error(`Ingrese el número de referencia para ${METODOS_PAGO.find((m) => m.id === mp.metodo)?.label}`);
+        const errorRef = validarReferencia(mp.referencia);
+        if (errorRef) {
+          toast.error(`${METODOS_PAGO.find((m) => m.id === mp.metodo)?.label}: ${errorRef}`);
           return;
         }
       }
@@ -533,14 +572,14 @@ export default function POS() {
       metodo_id: mp.metodo,
       monto_usd: parseFloat(mp.monto_usd || 0),
       ...(METODOS_PAGO.find((m) => m.id === mp.metodo)?.enBs && { monto_bs: parseFloat(mp.monto_bs || 0) }),
-      ...(mp.referencia && { referencia: mp.referencia }),
+      ...(mp.referencia?.trim() && { referencia: mp.referencia.trim() }),
       ...(mp.zelle_titular && { zelle_titular: mp.zelle_titular }),
       ...(mp.zelle_email && { zelle_email: mp.zelle_email }),
       ...(mp.metodo === 'cashea' && {
         cashea_metodo_inicial: mp.cashea_metodo_inicial || 'punto_venta',
         cashea_metodo_inicial_label:
           METODOS_INICIAL_CASHEA.find((m) => m.id === (mp.cashea_metodo_inicial || 'punto_venta'))?.label,
-        cashea_referencia_inicial: mp.cashea_referencia_inicial || '',
+        cashea_referencia_inicial: mp.cashea_referencia_inicial?.trim() || '',
       }),
     }));
     if (montoRetencion > 0) pagos.push({ metodo_id: 'retencion_iva', monto_usd: montoRetencion });
@@ -561,7 +600,7 @@ export default function POS() {
       let { data: factura, error } = await emitir(false);
 
       if (error?.hint === 'SOBREGIRO_CREDITO' && ['admin', 'gerente'].includes(profile?.rol)) {
-        const autorizar = window.confirm(`⚠️ ${error.message}\n\n¿Autoriza el sobregiro bajo su responsabilidad?`);
+        const autorizar = await confirmar({ titulo: 'Crédito excedido', mensaje: `${error.message}\n\n¿Autoriza el sobregiro bajo su responsabilidad?`, textoConfirmar: 'Autorizar' });
         if (!autorizar) return;
         ({ data: factura, error } = await emitir(true));
       }
@@ -588,7 +627,7 @@ export default function POS() {
         setCuentaActivaId(reset.id);
       }
     } catch (error) {
-      toast.error(error.message || 'Error al emitir factura');
+      toast.error(mensajeError(error, 'Error al emitir factura'));
     } finally {
       setLoading(false);
     }
@@ -633,7 +672,7 @@ export default function POS() {
         )}
         {!tasaHoy && (
           <div className="pos-tasa pos-tasa--warning" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <span>⚠️ Sin tasa de cambio</span>
+            <span title={errorTasa || undefined}>⚠️ {errorTasa ? 'No se pudo consultar la tasa de cambio' : 'Sin tasa de cambio'}</span>
             <button className="btn btn--primary btn--xs" onClick={sincronizarBCV}>
               <HiOutlineArrowPath /> Cargar Tasa BCV
             </button>

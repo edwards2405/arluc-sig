@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { DialogoProvider } from './components/common/DialogoProvider';
 import { ThemeProvider } from './contexts/ThemeContext';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import AppLayout from './components/layout/AppLayout';
@@ -103,7 +104,9 @@ export default function App() {
               error: { iconTheme: { primary: '#EF4444', secondary: 'var(--bg-elevated)' } },
             }}
           />
-          <AppRoutes />
+          <DialogoProvider>
+            <AppRoutes />
+          </DialogoProvider>
         </AuthProvider>
       </ThemeProvider>
     </BrowserRouter>

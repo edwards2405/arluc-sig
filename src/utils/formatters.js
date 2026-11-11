@@ -77,18 +77,6 @@ export function formatFecha(fecha, includeTime = false) {
 }
 
 /**
- * Format a date for display in short format
- */
-export function formatFechaCorta(fecha) {
-  if (!fecha) return '';
-  return parseFecha(fecha).toLocaleDateString('es-VE', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
-}
-
-/**
  * Format exchange rate
  */
 export function formatTasa(tasa) {
@@ -96,26 +84,6 @@ export function formatTasa(tasa) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(tasa || 0)}/$`;
-}
-
-/**
- * Truncate text with ellipsis
- */
-export function truncate(text, length = 30) {
-  if (!text) return '';
-  return text.length > length ? text.substring(0, length) + '...' : text;
-}
-
-/**
- * Generate a SKU suggestion from product name
- */
-export function generarSKU(nombre) {
-  if (!nombre) return '';
-  return nombre
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '')
-    .substring(0, 6)
-    + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
 }
 
 /**

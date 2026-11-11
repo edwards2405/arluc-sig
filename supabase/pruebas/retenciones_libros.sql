@@ -17,10 +17,10 @@ create function pg_temp.cli(p_doc text) returns uuid language sql as $$
 
 \echo '=== 1. Venta de $280 + IVA a la Discoteca (contribuyente especial) SIN retención (debe fallar)'
 select pg_temp.como('vendedor@arluc.test');
-select emitir_factura(pg_temp.cli('J-50182736-2'), pg_temp.item('AUD-001', 1), '[{"metodo_id":"pago_movil","monto_usd":324.80,"referencia":"1"}]');
+select emitir_factura(pg_temp.cli('J-50182736-2'), pg_temp.item('AUD-001', 1), '[{"metodo_id":"pago_movil","monto_usd":324.80,"referencia":"PM-1001"}]');
 \echo '=== 2. Con retención equivocada (debe fallar)'
 select emitir_factura(pg_temp.cli('J-50182736-2'), pg_temp.item('AUD-001', 1),
-  '[{"metodo_id":"pago_movil","monto_usd":294.80,"referencia":"1"},{"metodo_id":"retencion_iva","monto_usd":30}]');
+  '[{"metodo_id":"pago_movil","monto_usd":294.80,"referencia":"PM-1001"},{"metodo_id":"retencion_iva","monto_usd":30}]');
 \echo '=== 3. Con la retención correcta: 75 % de 44,80 = 33,60; se cobran 291,20'
 select id as fact, numero_factura, total_usd, iva_usd, iva_retenido_usd
   from emitir_factura(pg_temp.cli('J-50182736-2'), pg_temp.item('AUD-001', 1),
@@ -28,7 +28,7 @@ select id as fact, numero_factura, total_usd, iva_usd, iva_retenido_usd
 \echo :numero_factura total=:total_usd iva=:iva_usd retenido=:iva_retenido_usd
 \echo '=== 4. Un cliente que NO es contribuyente especial no puede retener (debe fallar)'
 select emitir_factura(pg_temp.cli('V-24651980'), pg_temp.item('AUD-001', 1),
-  '[{"metodo_id":"pago_movil","monto_usd":291.20,"referencia":"1"},{"metodo_id":"retencion_iva","monto_usd":33.60}]');
+  '[{"metodo_id":"pago_movil","monto_usd":291.20,"referencia":"PM-1001"},{"metodo_id":"retencion_iva","monto_usd":33.60}]');
 
 \echo '=== 5. Asiento de la venta: la retención es un crédito fiscal (1.1.04.02)'
 select pg_temp.como('contador@arluc.test');

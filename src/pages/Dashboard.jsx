@@ -1,13 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { formatMonto, formatFecha, getTasaPantalla } from '../utils/formatters';
+import toast from 'react-hot-toast';
+import { mensajeError } from '../utils/errores';
+import { formatMonto, formatFecha, formatTasa, getTasaPantalla } from '../utils/formatters';
 import {
   HiOutlineBanknotes,
   HiOutlineDocumentText,
   HiOutlineArrowTrendingUp,
   HiOutlineExclamationTriangle,
   HiOutlineCalendarDays,
+  HiOutlineCube,
 } from 'react-icons/hi2';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -22,15 +25,30 @@ const ejeMonto = (usd) => {
     : formatMonto(usd);
 };
 
+// PostgREST entrega como máximo 1000 filas por petición: se lee por páginas
+async function traerTodo(crearConsulta) {
+  const filas = [];
+  for (let desde = 0; ; desde += 1000) {
+    const { data, error } = await crearConsulta().range(desde, desde + 999);
+    if (error) throw error;
+    filas.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return filas;
+}
+
 export default function Dashboard() {
   const { profile } = useAuth();
-  // Admin, gerente y contador ven el consolidado; los demás roles, sus propias ventas
+  // Admin, gerente y contador ven el consolidado; el vendedor, sus propias ventas;
+  // el almacenista no vende: ve indicadores de inventario
   const isAdmin = ['admin', 'gerente', 'contador'].includes(profile?.rol);
+  const esAlmacenista = profile?.rol === 'almacenista';
   const [stats, setStats] = useState({
     ventasHoy: 0, ventasSemana: 0, ventasMes: 0,
     facturasHoy: 0, facturasSemana: 0, facturasMes: 0,
     tasaActual: null,
     productosStockBajo: [],
+    productosActivos: 0, valorInventario: 0, unidadesInventario: 0,
   });
   const [ventasDiarias, setVentasDiarias] = useState([]);
   const [topProductos, setTopProductos] = useState([]);
@@ -45,37 +63,66 @@ export default function Dashboard() {
       const mesInicio = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
       const hace30Dias = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30).toISOString();
 
-      // Base query filter for vendedor
-      const vendedorId = !isAdmin ? profile.id : null;
+      // Filtro del vendedor (solo ve sus ventas)
+      const vendedorId = !isAdmin ? profile?.id : null;
+      const sinFilas = Promise.resolve([]);
 
-      // Prepare parallel queries
-      let qHoy = supabase.from('facturas').select('total_usd').gte('fecha_emision', hoyInicio).eq('estado', 'emitida');
-      let qSemana = supabase.from('facturas').select('total_usd').gte('fecha_emision', semanaInicio).eq('estado', 'emitida');
-      let qMes = supabase.from('facturas').select('total_usd, vendedor_id').gte('fecha_emision', mesInicio).eq('estado', 'emitida');
-      let qDiarias = supabase.from('facturas').select('total_usd, fecha_emision').gte('fecha_emision', hace30Dias).eq('estado', 'emitida').order('fecha_emision');
-      let qTasa = supabase.from('tasas_cambio').select('*').order('fecha_registro', { ascending: false }).limit(1).maybeSingle();
-      let qProds = isAdmin ? supabase.from('productos').select('id, nombre, sku, stock, stock_minimo').eq('activo', true) : Promise.resolve({ data: [] });
-      let qVendedores = isAdmin ? supabase.from('usuarios').select('id, nombre_completo').eq('rol', 'vendedor').eq('activo', true) : Promise.resolve({ data: [] });
-      let qDetalles = supabase.from('detalles_factura').select('producto_nombre, cantidad').limit(250);
+      // Facturas emitidas (las anuladas no cuentan como venta)
+      const facturasDesde = (campos, desde) => () => {
+        let q = supabase.from('facturas').select(campos).gte('fecha_emision', desde).eq('estado', 'emitida').order('fecha_emision').order('id');
+        if (vendedorId) q = q.eq('vendedor_id', vendedorId);
+        return q;
+      };
+      const ventas = (campos, desde) => (esAlmacenista ? sinFilas : traerTodo(facturasDesde(campos, desde)));
 
-      if (vendedorId) {
-        qHoy = qHoy.eq('vendedor_id', vendedorId);
-        qSemana = qSemana.eq('vendedor_id', vendedorId);
-        qMes = qMes.eq('vendedor_id', vendedorId);
-        qDiarias = qDiarias.eq('vendedor_id', vendedorId);
-      }
+      // Top productos: solo líneas de facturas emitidas de los últimos 30 días (y del vendedor si aplica)
+      const qDetalles = esAlmacenista ? sinFilas : traerTodo(() => {
+        let q = supabase
+          .from('detalles_factura')
+          .select('producto_nombre, cantidad, facturas!inner(fecha_emision, estado, vendedor_id)')
+          .eq('facturas.estado', 'emitida')
+          .gte('facturas.fecha_emision', hace30Dias)
+          .order('id');
+        if (vendedorId) q = q.eq('facturas.vendedor_id', vendedorId);
+        return q;
+      });
 
-      // Execute queries in PARALLEL
+      const verInventario = isAdmin || esAlmacenista;
+      const qProds = verInventario
+        ? traerTodo(() => supabase.from('productos').select('id, nombre, sku, stock, stock_minimo, costo_usd').eq('activo', true).order('nombre'))
+        : sinFilas;
+      const qVendedores = isAdmin
+        ? supabase.from('usuarios').select('id, nombre_completo').eq('rol', 'vendedor').eq('activo', true).then(({ data, error }) => {
+            if (error) throw error;
+            return data || [];
+          })
+        : sinFilas;
+      // Tasa vigente hoy (la de mañana, si ya se registró, no aplica todavía)
+      const qTasa = supabase.rpc('tasa_vigente').then(({ data, error }) => {
+        if (error) throw error;
+        return Number(data) || null;
+      });
+
+      // Consultas en paralelo
       const [
-        { data: ventasHoyData },
-        { data: ventasSemanaData },
-        { data: ventasMesData },
-        { data: facturasDiarias },
-        { data: tasaData },
-        { data: allProds },
-        { data: vendedoresData },
-        { data: detallesData },
-      ] = await Promise.all([qHoy, qSemana, qMes, qDiarias, qTasa, qProds, qVendedores, qDetalles]);
+        ventasHoyData,
+        ventasSemanaData,
+        ventasMesData,
+        facturasDiarias,
+        tasaData,
+        allProds,
+        vendedoresData,
+        detallesData,
+      ] = await Promise.all([
+        ventas('total_usd', hoyInicio),
+        ventas('total_usd', semanaInicio),
+        ventas('total_usd, vendedor_id', mesInicio),
+        ventas('total_usd, fecha_emision', hace30Dias),
+        qTasa,
+        qProds,
+        qVendedores,
+        qDetalles,
+      ]);
 
       const sumTotal = (arr) => (arr || []).reduce((sum, f) => sum + (parseFloat(f.total_usd) || 0), 0);
       const productosStockBajo = (allProds || []).filter(p => p.stock <= p.stock_minimo);
@@ -89,6 +136,9 @@ export default function Dashboard() {
         facturasMes: ventasMesData?.length || 0,
         tasaActual: tasaData,
         productosStockBajo,
+        productosActivos: allProds.length,
+        valorInventario: allProds.reduce((s, p) => s + (Number(p.stock) || 0) * (Number(p.costo_usd) || 0), 0),
+        unidadesInventario: allProds.reduce((s, p) => s + (Number(p.stock) || 0), 0),
       });
 
       // Group daily sales
@@ -125,10 +175,11 @@ export default function Dashboard() {
 
     } catch (error) {
       console.error('Error fetching stats:', error);
+      toast.error('No se pudieron cargar los indicadores: ' + mensajeError(error));
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, profile?.id]);
+  }, [isAdmin, esAlmacenista, profile?.id]);
 
   useEffect(() => {
     fetchStats();
@@ -149,7 +200,7 @@ export default function Dashboard() {
     <div className="page">
       <div className="page__header">
         <h1 className="page__title">
-          {isAdmin ? 'Dashboard General' : 'Mi Dashboard'}
+          {isAdmin ? 'Dashboard General' : esAlmacenista ? 'Dashboard de Inventario' : 'Mi Dashboard'}
         </h1>
         <p className="page__subtitle">
           ¡Hola, {profile?.nombre_completo}! — {formatFecha(new Date(), true)}
@@ -158,6 +209,45 @@ export default function Dashboard() {
 
       {/* KPI Cards */}
       <div className="stats-grid">
+        {esAlmacenista ? (
+          <>
+            <div className="stat-card">
+              <div className="stat-card__icon stat-card__icon--primary">
+                <HiOutlineCube />
+              </div>
+              <div className="stat-card__content">
+                <span className="stat-card__label">Productos Activos</span>
+                <span className="stat-card__value">{stats.productosActivos}</span>
+                <span className="stat-card__sub">{stats.unidadesInventario.toLocaleString('es-VE')} unidad(es) en existencia</span>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-card__icon stat-card__icon--success">
+                <HiOutlineBanknotes />
+              </div>
+              <div className="stat-card__content">
+                <span className="stat-card__label">Valor del Inventario</span>
+                <span className="stat-card__value">{formatMonto(stats.valorInventario)}</span>
+                <span className="stat-card__sub">A costo promedio</span>
+              </div>
+            </div>
+
+            <div className="stat-card">
+              <div className="stat-card__icon stat-card__icon--warning">
+                <HiOutlineExclamationTriangle />
+              </div>
+              <div className="stat-card__content">
+                <span className="stat-card__label">Stock Bajo</span>
+                <span className="stat-card__value">{stats.productosStockBajo.length}</span>
+                <span className="stat-card__sub">
+                  {stats.productosStockBajo.filter((p) => p.stock <= 0).length} agotado(s)
+                </span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
         <div className="stat-card">
           <div className="stat-card__icon stat-card__icon--primary">
             <HiOutlineBanknotes />
@@ -190,6 +280,8 @@ export default function Dashboard() {
             <span className="stat-card__sub">{stats.facturasMes} factura(s)</span>
           </div>
         </div>
+          </>
+        )}
 
         <div className="stat-card">
           <div className="stat-card__icon stat-card__icon--info">
@@ -198,16 +290,17 @@ export default function Dashboard() {
           <div className="stat-card__content">
             <span className="stat-card__label">Tasa del Día</span>
             <span className="stat-card__value">
-              {stats.tasaActual ? `Bs ${stats.tasaActual.tasa_usd_bs}` : 'Sin registrar'}
+              {stats.tasaActual ? formatTasa(stats.tasaActual) : 'Sin registrar'}
             </span>
             <span className="stat-card__sub">
-              {stats.tasaActual ? formatFecha(stats.tasaActual.fecha_registro) : '—'}
+              {stats.tasaActual ? 'Vigente hoy' : '—'}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Charts Row */}
+      {/* Charts Row (ventas: no aplica al almacenista) */}
+      {!esAlmacenista && (
       <div className="dashboard-grid">
         {/* Sales Chart */}
         <div className="card dashboard-grid__chart">
@@ -262,12 +355,13 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+      )}
 
-      {/* Admin-only sections */}
-      {isAdmin && (
+      {/* Secciones de dirección (y stock bajo para el almacenista) */}
+      {(isAdmin || esAlmacenista) && (
         <div className="dashboard-grid">
           {/* Seller Performance */}
-          {vendedoresStats.length > 0 && (
+          {isAdmin && vendedoresStats.length > 0 && (
             <div className="card dashboard-grid__chart">
               <h3 className="card__title">Rendimiento por Vendedor (Mes)</h3>
               <div className="table-container">

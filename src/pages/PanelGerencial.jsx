@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { useDialogo } from '../components/common/DialogoProvider';
 import {
   ResponsiveContainer, ComposedChart, LineChart, Line, Bar, BarChart, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell,
 } from 'recharts';
@@ -13,6 +14,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { formatMonto, formatBs, formatFecha, getTasaPantalla } from '../utils/formatters';
 import Pagination from '../components/common/Pagination';
 import usePaginacion from '../hooks/usePaginacion';
+import { hoyLocal, validarRango } from '../utils/validaciones';
+import { puede, puedeAcceder } from '../utils/permisos';
+import { mensajeError, exigirFilas } from '../utils/errores';
 
 // Paleta categórica validada (ver skill de visualización): ventas, margen, 3er slot.
 const ESTILOS = `
@@ -127,8 +131,9 @@ const tooltipStyle = {
 };
 
 export default function PanelGerencial() {
+  const { pedirTexto } = useDialogo();
   const { profile } = useAuth();
-  const puedeEditarMetas = ['admin', 'gerente'].includes(profile?.rol);
+  const puedeEditarMetas = puede(profile?.rol, 'meta.editar');
   const [preset, setPreset] = useState('mes');
   const [rango, setRango] = useState(() => rangoPreset('mes'));
   const [datos, setDatos] = useState(null);
@@ -141,7 +146,16 @@ export default function PanelGerencial() {
   const anio = hoy.getFullYear();
   const mes = hoy.getMonth() + 1;
 
+  const errorRango = !rango.desde || !rango.hasta
+    ? 'Indique las fechas «desde» y «hasta»'
+    : validarRango(rango.desde, rango.hasta);
+
   const cargar = useCallback(async () => {
+    // Rango inválido: se muestra el error y no se consulta
+    if (!rango.desde || !rango.hasta || validarRango(rango.desde, rango.hasta)) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const args = { p_desde: rango.desde, p_hasta: rango.hasta };
     const llamadas = await Promise.all([
@@ -156,7 +170,7 @@ export default function PanelGerencial() {
       supabase.rpc('sig_alertas_tasa'),
     ]);
     const error = llamadas.find((r) => r.error)?.error;
-    if (error) toast.error('Error cargando indicadores: ' + error.message);
+    if (error) toast.error('Error cargando indicadores: ' + mensajeError(error));
     const [resumen, diarias, metas, proyeccion, alertas, mapa, abc, rfm, alertasTasa] = llamadas.map((r) => r.data);
     setDatos({ resumen, diarias: diarias || [], metas: metas || [], proyeccion: proyeccion || [],
       alertas: [...(alertasTasa || []), ...(alertas || [])], mapa: mapa || [], abc: abc || [], rfm: rfm || [] });
@@ -171,18 +185,23 @@ export default function PanelGerencial() {
   }
 
   async function editarMeta(fila) {
-    const valor = window.prompt(`Meta de ventas netas (USD, sin IVA) de ${fila.nombre} para ${String(mes).padStart(2, '0')}/${anio}:`,
-      fila.meta ?? '');
-    if (valor === null) return;
-    const monto = parseFloat(valor);
-    if (!(monto > 0)) { toast.error('Ingrese un monto mayor a cero'); return; }
+    const monto = await pedirTexto({
+      titulo: `Meta de ventas de ${fila.nombre}`,
+      mensaje: `Ventas netas sin IVA para ${String(mes).padStart(2, '0')}/${anio}.`,
+      etiqueta: 'Meta (USD)', tipo: 'number', mayorQue: 0, inicial: fila.meta ?? '',
+      ayuda: 'Se registra en dólares y el panel la muestra en Bs a la tasa vigente.',
+      textoConfirmar: 'Guardar meta',
+    });
+    if (monto === null) return;
     let consulta = supabase.from('metas_ventas').select('id').eq('anio', anio).eq('mes', mes);
     consulta = fila.vendedor_id ? consulta.eq('vendedor_id', fila.vendedor_id) : consulta.is('vendedor_id', null);
-    const { data: existente } = await consulta.maybeSingle();
-    const { error } = existente
-      ? await supabase.from('metas_ventas').update({ monto_usd: monto }).eq('id', existente.id)
-      : await supabase.from('metas_ventas').insert({ anio, mes, vendedor_id: fila.vendedor_id, monto_usd: monto });
-    if (error) { toast.error(error.message); return; }
+    const { data: existente, error: errorConsulta } = await consulta.maybeSingle();
+    if (errorConsulta) { toast.error(mensajeError(errorConsulta)); return; }
+    const { data, error } = existente
+      ? await supabase.from('metas_ventas').update({ monto_usd: monto }).eq('id', existente.id).select('id')
+      : await supabase.from('metas_ventas').insert({ anio, mes, vendedor_id: fila.vendedor_id, monto_usd: monto }).select('id');
+    if (error) { toast.error(mensajeError(error)); return; }
+    try { exigirFilas(data); } catch (err) { toast.error(err.message); return; }
     toast.success('Meta actualizada');
     cargar();
   }
@@ -251,11 +270,16 @@ export default function PanelGerencial() {
             {etiqueta}
           </button>
         ))}
-        <input type="date" value={rango.desde} max={rango.hasta} aria-label="Desde"
+        <input type="date" value={rango.desde} max={rango.hasta || hoyLocal()} aria-label="Desde"
           onChange={(e) => { setPreset('custom'); setRango({ ...rango, desde: e.target.value }); }} />
-        <input type="date" value={rango.hasta} min={rango.desde} aria-label="Hasta"
+        <input type="date" value={rango.hasta} min={rango.desde} max={hoyLocal()} aria-label="Hasta"
           onChange={(e) => { setPreset('custom'); setRango({ ...rango, hasta: e.target.value }); }} />
       </div>
+      {errorRango && (
+        <p className="text-danger" role="alert" style={{ margin: '0 0 0.75rem', fontSize: '0.85rem' }}>
+          {errorRango}. Los indicadores mostrados corresponden al último rango válido.
+        </p>
+      )}
 
       {/* KPIs principales */}
       <div className="sig-fila">
@@ -284,12 +308,16 @@ export default function PanelGerencial() {
           {datos.alertas.length === 0 && <p className="sig-estado" style={{ color: 'var(--estado-bien)' }}><HiOutlineCheckCircle /> Sin alertas</p>}
           {datos.alertas.map((a, i) => {
             const e = ESTADO[a.nivel] || ESTADO.INFO;
-            return (
-              <Link key={i} to={a.ruta || '#'} className="sig-alerta">
+            const contenido = (
+              <>
                 <span className="sig-estado" style={{ color: e.color, minWidth: '7.5rem' }}><e.icono /> {e.etiqueta}</span>
                 <span><strong>{a.categoria}:</strong> {a.mensaje}<small>{a.detalle}</small></span>
-              </Link>
+              </>
             );
+            // Solo se enlaza a pantallas que el rol puede abrir
+            return a.ruta && puedeAcceder(profile?.rol, a.ruta)
+              ? <Link key={i} to={a.ruta} className="sig-alerta">{contenido}</Link>
+              : <div key={i} className="sig-alerta">{contenido}</div>;
           })}
         </div>
 

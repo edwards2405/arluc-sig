@@ -4,6 +4,8 @@ import { supabase } from '../lib/supabase';
 import { formatMonto, formatBs, formatDolares, formatFecha } from '../utils/formatters';
 import { getEmpresaConfig } from '../utils/constants';
 import toast from 'react-hot-toast';
+import { hoyLocal, validarRango } from '../utils/validaciones';
+import { mensajeError } from '../utils/errores';
 import Pagination from '../components/common/Pagination';
 import {
   HiOutlineDocumentChartBar,
@@ -22,8 +24,19 @@ import {
   HiOutlineBuildingLibrary,
   HiOutlineDevicePhoneMobile,
   HiOutlineShieldCheck,
-  HiOutlineCheckCircle,
 } from 'react-icons/hi2';
+
+// PostgREST entrega como máximo 1000 filas por petición: se lee por páginas con .range()
+async function traerTodo(crearConsulta) {
+  const filas = [];
+  for (let desde = 0; ; desde += 1000) {
+    const { data, error } = await crearConsulta().range(desde, desde + 999);
+    if (error) throw error;
+    filas.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return filas;
+}
 
 // ── Date preset helpers ──────────────────────────────────────────
 function getPreset(preset) {
@@ -85,63 +98,63 @@ export default function Reportes() {
 
   useEffect(() => { loadReportes(); }, [fechaDesde, fechaHasta]);
 
+  const errorRango = !fechaDesde || !fechaHasta
+    ? 'Indique las fechas «desde» y «hasta»'
+    : validarRango(fechaDesde, fechaHasta);
+
   async function loadReportes() {
+    // Rango inválido: se muestra el error y no se consulta
+    if (errorRango) {
+      setVentas([]);
+      setDetallesVentas([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const [
-        { data: facturasData, error: fErr },
-        { data: prodsData, error: pErr },
-        { data: rateData },
-      ] = await Promise.all([
-        supabase
+      // Límites del día en hora local, convertidos a UTC para la consulta
+      const inicio = new Date(`${fechaDesde}T00:00:00`).toISOString();
+      const fin = new Date(`${fechaHasta}T23:59:59.999`).toISOString();
+
+      const [facturas, prodsData, detallesData, { data: rateData, error: tErr }] = await Promise.all([
+        traerTodo(() => supabase
           .from('facturas')
           .select(`
             id, numero_factura, fecha_emision, estado, total_usd, total_bs, metodos_pago,
             clientes(nombre, documento_identidad),
             usuarios!facturas_vendedor_id_fkey(nombre_completo)
           `)
-          .gte('fecha_emision', `${fechaDesde}T00:00:00`)
-          .lte('fecha_emision', `${fechaHasta}T23:59:59`)
-          .order('fecha_emision', { ascending: false }),
-        supabase
+          .gte('fecha_emision', inicio)
+          .lte('fecha_emision', fin)
+          .order('fecha_emision', { ascending: false })
+          .order('id')),
+        traerTodo(() => supabase
           .from('productos')
           .select('id, sku, nombre, precio_usd, stock, stock_minimo, categorias(nombre)')
           .eq('activo', true)
-          .order('nombre'),
-        supabase
-          .from('tasas_cambio')
-          .select('tasa_usd_bs')
-          .order('fecha_registro', { ascending: false })
-          .limit(1)
-          .maybeSingle(),
+          .order('nombre')
+          .order('id')),
+        // Líneas de todas las facturas emitidas del rango (Top productos)
+        traerTodo(() => supabase
+          .from('detalles_factura')
+          .select('producto_nombre, cantidad, precio_unitario_usd, subtotal_usd, facturas!inner(fecha_emision, estado)')
+          .eq('facturas.estado', 'emitida')
+          .gte('facturas.fecha_emision', inicio)
+          .lte('facturas.fecha_emision', fin)
+          .order('id')),
+        // Tasa vigente hoy (no la de mañana si ya se registró)
+        supabase.rpc('tasa_vigente'),
       ]);
 
-      if (fErr) throw fErr;
-      if (pErr) throw pErr;
+      if (tErr) toast.error('No se pudo obtener la tasa vigente: ' + mensajeError(tErr));
 
-      const facturas = facturasData || [];
       setVentas(facturas);
-      setInventario(prodsData || []);
-      setTasaActual(rateData);
-
-      // Fetch detalles only for emitted invoices (max 150)
-      const facturaIds = facturas
-        .filter(f => f.estado === 'emitida')
-        .slice(0, 150)
-        .map(f => f.id);
-
-      if (facturaIds.length > 0) {
-        const { data: detallesData } = await supabase
-          .from('detalles_factura')
-          .select('producto_nombre, cantidad, precio_unitario_usd, subtotal_usd')
-          .in('factura_id', facturaIds);
-        setDetallesVentas(detallesData || []);
-      } else {
-        setDetallesVentas([]);
-      }
+      setInventario(prodsData);
+      setTasaActual(Number(rateData) || null);
+      setDetallesVentas(detallesData);
     } catch (error) {
       console.error('Error cargando reportes:', error);
-      toast.error('Error al cargar datos del reporte');
+      toast.error('Error al cargar datos del reporte: ' + mensajeError(error));
     } finally {
       setLoading(false);
     }
@@ -179,7 +192,7 @@ export default function Reportes() {
   facturasEmitidas.forEach(f => {
     const fTasa = (f.total_usd > 0 && f.total_bs > 0)
       ? (parseFloat(f.total_bs) / parseFloat(f.total_usd))
-      : (tasaActual?.tasa_usd_bs || 1);
+      : (tasaActual || 1);
 
     (f.metodos_pago || []).forEach(mp => {
       const id = (mp.metodo_id || mp.id || '').toLowerCase();
@@ -386,7 +399,7 @@ export default function Reportes() {
   const vendedoresPage = listaVendedores.slice((pageVendedores - 1) * 20, pageVendedores * 20);
 
   // Inventory valuation
-  const tasaBsRef = tasaActual?.tasa_usd_bs || 1;
+  const tasaBsRef = tasaActual || 1;
   const valorInventarioUSD = inventario.reduce((s, p) => s + (p.stock * parseFloat(p.precio_usd || 0)), 0);
   const productosBajoStock = inventario.filter(p => p.stock <= p.stock_minimo);
 
@@ -675,18 +688,23 @@ export default function Reportes() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: 'auto' }}>
             <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Desde</span>
             <input
-              type="date" value={fechaDesde}
+              type="date" value={fechaDesde} max={fechaHasta || hoyLocal()}
               onChange={e => handleManualDate('desde', e.target.value)}
               style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: '6px', padding: '0.35rem 0.55rem', fontSize: '0.82rem' }}
             />
             <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Hasta</span>
             <input
-              type="date" value={fechaHasta}
+              type="date" value={fechaHasta} min={fechaDesde || undefined} max={hoyLocal()}
               onChange={e => handleManualDate('hasta', e.target.value)}
               style={{ background: 'var(--bg-input)', border: '1px solid var(--border)', color: 'var(--text-primary)', borderRadius: '6px', padding: '0.35rem 0.55rem', fontSize: '0.82rem' }}
             />
           </div>
         </div>
+        {errorRango && (
+          <p className="text-danger" role="alert" style={{ margin: 0, fontSize: '0.85rem' }}>
+            {errorRango}. Corrija el rango para consultar.
+          </p>
+        )}
 
         {/* Tab navigation */}
         <div style={{ display: 'flex', gap: '0.35rem', background: 'var(--bg-elevated)', padding: '4px', borderRadius: '10px', border: '1px solid var(--border)' }}>
@@ -859,7 +877,7 @@ export default function Reportes() {
                       <td style={{ color: '#F59E0B', fontWeight: '700', textAlign: 'center' }}>{idx + 1}</td>
                       <td>
                         <strong>{prod.nombre}</strong>
-                        {prod.sku && <div style={{ fontSize: '0.78rem', color: '#666' }}>SKU: {prod.sku}</div>}
+                        {prod.sku && <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>SKU: {prod.sku}</div>}
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         <span className={`badge ${prod.cantidad === 0 ? 'badge--danger' : 'badge--warning'}`}>
@@ -927,30 +945,30 @@ export default function Reportes() {
                   <h4 style={{ margin: 0, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#22C55E' }}>
                     1. Efectivo en Físico (Gaveta)
                   </h4>
-                  <span style={{ fontSize: '0.75rem', color: '#888' }}>Dinero que debe estar en caja física</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Dinero que debe estar en caja física</span>
                 </div>
               </div>
 
-              <div style={{ padding: '0.75rem', background: '#141414', borderRadius: '8px', marginBottom: '0.6rem', border: '1px solid #262626' }}>
-                <div style={{ fontSize: '0.75rem', color: '#A3A3A3', textTransform: 'uppercase' }}>Dólares en Billetes (equiv. Bs)</div>
+              <div style={{ padding: '0.75rem', background: 'var(--bg-elevated)', borderRadius: '8px', marginBottom: '0.6rem', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Dólares en Billetes (equiv. Bs)</div>
                 <div style={{ fontSize: '1.6rem', fontWeight: '900', color: '#22C55E', marginTop: '2px' }}>
                   {formatBs(cierreCaja.efectivoUSD.total_bs)}
                 </div>
-                <div style={{ fontSize: '0.78rem', color: '#888' }}>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
                   Ref. {formatDolares(totalEfectivoUSD)}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: '#777', marginTop: '4px', borderTop: '1px solid #222', paddingTop: '4px' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px', borderTop: '1px solid var(--border)', paddingTop: '4px' }}>
                   • Ventas directas: {formatMonto(cierreCaja.efectivoUSD.directas_usd, tasaCanal(cierreCaja.efectivoUSD))}<br />
                   • Iniciales Cashea en divisas: {formatMonto(cierreCaja.efectivoUSD.iniciales_usd, tasaCanal(cierreCaja.efectivoUSD))}
                 </div>
               </div>
 
-              <div style={{ padding: '0.75rem', background: '#141414', borderRadius: '8px', border: '1px solid #262626' }}>
-                <div style={{ fontSize: '0.75rem', color: '#A3A3A3', textTransform: 'uppercase' }}>Bolívares en Billetes (Bs)</div>
+              <div style={{ padding: '0.75rem', background: 'var(--bg-elevated)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Bolívares en Billetes (Bs)</div>
                 <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#F59E0B', marginTop: '2px' }}>
                   {formatBs(totalEfectivoBs)}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: '#777', marginTop: '4px', borderTop: '1px solid #222', paddingTop: '4px' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px', borderTop: '1px solid var(--border)', paddingTop: '4px' }}>
                   • Ventas directas: {formatBs(cierreCaja.efectivoBs.directas_bs)}<br />
                   • Iniciales Cashea en Bs: {formatBs(cierreCaja.efectivoBs.iniciales_bs)}
                 </div>
@@ -967,16 +985,16 @@ export default function Reportes() {
                   <h4 style={{ margin: 0, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#8B5CF6' }}>
                     2. Cuentas en Banco (Bolívares)
                   </h4>
-                  <span style={{ fontSize: '0.75rem', color: '#888' }}>Punto de Venta, Pago Móvil y Bancos</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Punto de Venta, Pago Móvil y Bancos</span>
                 </div>
               </div>
 
-              <div style={{ padding: '0.75rem', background: '#141414', borderRadius: '8px', marginBottom: '0.6rem', border: '1px solid #262626' }}>
-                <div style={{ fontSize: '0.75rem', color: '#A3A3A3', textTransform: 'uppercase' }}>Total a Verificar en Bancos (Bs)</div>
+              <div style={{ padding: '0.75rem', background: 'var(--bg-elevated)', borderRadius: '8px', marginBottom: '0.6rem', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Total a Verificar en Bancos (Bs)</div>
                 <div style={{ fontSize: '1.6rem', fontWeight: '900', color: '#A78BFA', marginTop: '2px' }}>
                   {formatBs(totalBancoBs)}
                 </div>
-                <div style={{ fontSize: '0.78rem', color: '#888' }}>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
                   Contravalor Ref: {formatDolares(totalBancoUSD_equiv)}
                 </div>
               </div>
@@ -986,7 +1004,7 @@ export default function Reportes() {
                   <span>💳 <strong>Punto de Venta (Lote):</strong></span>
                   <span style={{ fontWeight: 'bold' }}>{formatBs(cierreCaja.puntoVenta.total_bs)}</span>
                 </div>
-                <div style={{ fontSize: '0.72rem', color: '#777', paddingLeft: '0.6rem' }}>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', paddingLeft: '0.6rem' }}>
                   (Ventas: {formatBs(cierreCaja.puntoVenta.directas_bs)} | Iniciales Cashea: {formatBs(cierreCaja.puntoVenta.iniciales_bs)})
                 </div>
 
@@ -994,7 +1012,7 @@ export default function Reportes() {
                   <span>📲 <strong>Pago Móvil (Recibido):</strong></span>
                   <span style={{ fontWeight: 'bold' }}>{formatBs(cierreCaja.pagoMovil.total_bs)}</span>
                 </div>
-                <div style={{ fontSize: '0.72rem', color: '#777', paddingLeft: '0.6rem' }}>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', paddingLeft: '0.6rem' }}>
                   (Ventas: {formatBs(cierreCaja.pagoMovil.directas_bs)} | Iniciales Cashea: {formatBs(cierreCaja.pagoMovil.iniciales_bs)})
                 </div>
 
@@ -1017,21 +1035,21 @@ export default function Reportes() {
                   <h4 style={{ margin: 0, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#3B82F6' }}>
                     3. Banco Digital (Zelle)
                   </h4>
-                  <span style={{ fontSize: '0.75rem', color: '#888' }}>Cobros recibidos por cuenta Zelle</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Cobros recibidos por cuenta Zelle</span>
                 </div>
               </div>
 
-              <div style={{ padding: '0.75rem', background: '#141414', borderRadius: '8px', marginBottom: '0.6rem', border: '1px solid #262626' }}>
-                <div style={{ fontSize: '0.75rem', color: '#A3A3A3', textTransform: 'uppercase' }}>Total Recibido en Zelle (equiv. Bs)</div>
+              <div style={{ padding: '0.75rem', background: 'var(--bg-elevated)', borderRadius: '8px', marginBottom: '0.6rem', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Total Recibido en Zelle (equiv. Bs)</div>
                 <div style={{ fontSize: '1.6rem', fontWeight: '900', color: '#60A5FA', marginTop: '2px' }}>
                   {formatBs(cierreCaja.zelle.total_bs)}
                 </div>
-                <div style={{ fontSize: '0.78rem', color: '#888' }}>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
                   {cierreCaja.zelle.transacciones} operaciones | Ref. {formatDolares(totalZelleUSD)}
                 </div>
               </div>
 
-              <div style={{ fontSize: '0.75rem', color: '#777', padding: '0.5rem', background: '#141414', borderRadius: '6px', border: '1px solid #222' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', padding: '0.5rem', background: 'var(--bg-elevated)', borderRadius: '6px', border: '1px solid var(--border)' }}>
                 • Ventas directas Zelle: {formatMonto(cierreCaja.zelle.directas_usd, tasaCanal(cierreCaja.zelle))}<br />
                 • Iniciales Cashea en Zelle: {formatMonto(cierreCaja.zelle.iniciales_usd, tasaCanal(cierreCaja.zelle))}
               </div>
@@ -1047,21 +1065,21 @@ export default function Reportes() {
                   <h4 style={{ margin: 0, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px', color: '#EC4899' }}>
                     4. Financiado por Cashea
                   </h4>
-                  <span style={{ fontSize: '0.75rem', color: '#888' }}>Crédito que Cashea liquida al comercio</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Crédito que Cashea liquida al comercio</span>
                 </div>
               </div>
 
-              <div style={{ padding: '0.75rem', background: '#141414', borderRadius: '8px', marginBottom: '0.6rem', border: '1px solid #262626' }}>
+              <div style={{ padding: '0.75rem', background: 'var(--bg-elevated)', borderRadius: '8px', marginBottom: '0.6rem', border: '1px solid var(--border)' }}>
                 <div style={{ fontSize: '0.75rem', color: '#EC4899', textTransform: 'uppercase', fontWeight: 'bold' }}>Total Financiado a Clientes</div>
                 <div style={{ fontSize: '1.6rem', fontWeight: '900', color: '#F472B6', marginTop: '2px' }}>
                   {formatBs(totalCasheaFinanciadoBs)}
                 </div>
-                <div style={{ fontSize: '0.78rem', color: '#888' }}>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
                   Ref. {formatDolares(totalCasheaFinanciadoUSD)} | {cierreCaja.casheaFinanciado.transacciones} órdenes Cashea
                 </div>
               </div>
 
-              <div style={{ fontSize: '0.75rem', color: '#aaa', fontStyle: 'italic', padding: '0.4rem', borderTop: '1px dotted #333' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontStyle: 'italic', padding: '0.4rem', borderTop: '1px dotted var(--border)' }}>
                 * El cliente pagó la inicial en tienda y el saldo restante es liquidado por Cashea según cronograma.
               </div>
             </div>
@@ -1089,28 +1107,28 @@ export default function Reportes() {
                     <td><strong>💵 Efectivo en Dólares</strong></td>
                     <td style={{ textAlign: 'center' }}>{cierreCaja.efectivoUSD.transacciones}</td>
                     <td style={{ textAlign: 'right' }}><strong style={{ color: '#22C55E' }}>{formatBs(cierreCaja.efectivoUSD.total_bs)}</strong></td>
-                    <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(totalEfectivoUSD)}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{formatDolares(totalEfectivoUSD)}</td>
                     <td style={{ textAlign: 'right' }}><span className="badge badge--success">Físico en Gaveta</span></td>
                   </tr>
                   <tr>
                     <td><strong>💵 Efectivo Bolívares (Bs)</strong></td>
                     <td style={{ textAlign: 'center' }}>{cierreCaja.efectivoBs.transacciones}</td>
                     <td style={{ textAlign: 'right' }}><strong style={{ color: '#F59E0B' }}>{formatBs(totalEfectivoBs)}</strong></td>
-                    <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(cierreCaja.efectivoBs.total_usd)}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{formatDolares(cierreCaja.efectivoBs.total_usd)}</td>
                     <td style={{ textAlign: 'right' }}><span className="badge badge--success">Físico en Gaveta</span></td>
                   </tr>
                   <tr>
                     <td><strong>💳 Punto de Venta (Tarjetas Débito/Crédito)</strong></td>
                     <td style={{ textAlign: 'center' }}>{cierreCaja.puntoVenta.transacciones}</td>
                     <td style={{ textAlign: 'right' }}><strong style={{ color: '#A78BFA' }}>{formatBs(cierreCaja.puntoVenta.total_bs)}</strong></td>
-                    <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(cierreCaja.puntoVenta.total_usd)}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{formatDolares(cierreCaja.puntoVenta.total_usd)}</td>
                     <td style={{ textAlign: 'right' }}><span className="badge badge--primary">Banco en Bolívares</span></td>
                   </tr>
                   <tr>
                     <td><strong>📲 Pago Móvil Interbancario</strong></td>
                     <td style={{ textAlign: 'center' }}>{cierreCaja.pagoMovil.transacciones}</td>
                     <td style={{ textAlign: 'right' }}><strong style={{ color: '#A78BFA' }}>{formatBs(cierreCaja.pagoMovil.total_bs)}</strong></td>
-                    <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(cierreCaja.pagoMovil.total_usd)}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{formatDolares(cierreCaja.pagoMovil.total_usd)}</td>
                     <td style={{ textAlign: 'right' }}><span className="badge badge--primary">Banco en Bolívares</span></td>
                   </tr>
                   {cierreCaja.transferencia.total_bs > 0 && (
@@ -1118,7 +1136,7 @@ export default function Reportes() {
                       <td><strong>🏛️ Transferencias Bancarias</strong></td>
                       <td style={{ textAlign: 'center' }}>{cierreCaja.transferencia.transacciones}</td>
                       <td style={{ textAlign: 'right' }}><strong style={{ color: '#A78BFA' }}>{formatBs(cierreCaja.transferencia.total_bs)}</strong></td>
-                      <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(cierreCaja.transferencia.total_usd)}</td>
+                      <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{formatDolares(cierreCaja.transferencia.total_usd)}</td>
                       <td style={{ textAlign: 'right' }}><span className="badge badge--primary">Banco en Bolívares</span></td>
                     </tr>
                   )}
@@ -1127,7 +1145,7 @@ export default function Reportes() {
                       <td><strong>🌐 Zelle</strong></td>
                       <td style={{ textAlign: 'center' }}>{cierreCaja.zelle.transacciones}</td>
                       <td style={{ textAlign: 'right' }}><strong style={{ color: '#60A5FA' }}>{formatBs(cierreCaja.zelle.total_bs)}</strong></td>
-                      <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(totalZelleUSD)}</td>
+                      <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{formatDolares(totalZelleUSD)}</td>
                       <td style={{ textAlign: 'right' }}><span className="badge badge--info">Banco Internacional</span></td>
                     </tr>
                   )}
@@ -1136,7 +1154,7 @@ export default function Reportes() {
                       <td><strong>📱 Monto Financiado por Cashea (Crédito a Clientes)</strong></td>
                       <td style={{ textAlign: 'center' }}>{cierreCaja.casheaFinanciado.transacciones}</td>
                       <td style={{ textAlign: 'right' }}><strong style={{ color: '#EC4899' }}>{formatBs(totalCasheaFinanciadoBs)}</strong></td>
-                      <td style={{ textAlign: 'right', color: '#888' }}>{formatDolares(totalCasheaFinanciadoUSD)}</td>
+                      <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{formatDolares(totalCasheaFinanciadoUSD)}</td>
                       <td style={{ textAlign: 'right' }}><span className="badge" style={{ background: '#EC4899', color: '#fff' }}>Por Liquidar Cashea</span></td>
                     </tr>
                   )}
@@ -1169,21 +1187,21 @@ export default function Reportes() {
                   <HiOutlineReceiptPercent />
                   Desglose Detallado de Iniciales Cobradas de Cashea
                 </h4>
-                <div style={{ fontSize: '0.85rem', color: '#fff', fontWeight: 'bold' }}>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: 'bold' }}>
                   Total Iniciales Cobradas en Tienda: {formatBs(cierreCaja.inicialesCasheaTotal.total_bs)} | Ref. {formatDolares(cierreCaja.inicialesCasheaTotal.total_usd)}
                 </div>
               </div>
-              <p style={{ fontSize: '0.78rem', color: '#888', margin: '0 0 0.75rem 0' }}>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0 0 0.75rem 0' }}>
                 Los siguientes importes ya están sumados en sus respectivas cuentas de caja y banco arriba, según cómo pagó cada cliente su inicial:
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
                 {Object.entries(cierreCaja.inicialesCasheaTotal.porMetodo).map(([met, vals]) => (
-                  <div key={met} style={{ background: '#141414', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid #262626' }}>
-                    <div style={{ fontSize: '0.75rem', color: '#888', textTransform: 'uppercase' }}>{met}</div>
-                    <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: '#fff', marginTop: '2px' }}>
+                  <div key={met} style={{ background: 'var(--bg-elevated)', padding: '0.65rem 0.85rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{met}</div>
+                    <div style={{ fontSize: '1.15rem', fontWeight: 'bold', color: 'var(--text-primary)', marginTop: '2px' }}>
                       {formatBs(vals.bs)}
                     </div>
-                    <div style={{ fontSize: '0.75rem', color: '#A3A3A3' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                       Ref. {formatDolares(vals.usd)} ({vals.ops} iniciales)
                     </div>
                   </div>
@@ -1194,17 +1212,17 @@ export default function Reportes() {
 
           {/* Bloque de Firmas y Validación de Cierre */}
           <div className="card" style={{ marginTop: '0.5rem', padding: '1.25rem' }}>
-            <h4 style={{ margin: '0 0 1.25rem 0', fontSize: '0.9rem', textTransform: 'uppercase', color: '#888', letterSpacing: '0.5px' }}>
+            <h4 style={{ margin: '0 0 1.25rem 0', fontSize: '0.9rem', textTransform: 'uppercase', color: 'var(--text-secondary)', letterSpacing: '0.5px' }}>
               Validación y Firmas de Auditoría de Cierre
             </h4>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '2rem' }}>
-              <div style={{ borderTop: '1.5px solid #444', paddingTop: '0.6rem', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#fff' }}>Cajero / Responsable de Caja</div>
-                <div style={{ fontSize: '0.75rem', color: '#777', marginTop: '2px' }}>Firma y C.I. de quien entrega el turno</div>
+              <div style={{ borderTop: '1.5px solid var(--border)', paddingTop: '0.6rem', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>Cajero / Responsable de Caja</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>Firma y C.I. de quien entrega el turno</div>
               </div>
-              <div style={{ borderTop: '1.5px solid #444', paddingTop: '0.6rem', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#fff' }}>Administrador / Supervisor</div>
-                <div style={{ fontSize: '0.75rem', color: '#777', marginTop: '2px' }}>Firma de conformidad y recepción de fondos</div>
+              <div style={{ borderTop: '1.5px solid var(--border)', paddingTop: '0.6rem', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-primary)' }}>Administrador / Supervisor</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>Firma de conformidad y recepción de fondos</div>
               </div>
             </div>
           </div>
@@ -1309,17 +1327,17 @@ export default function Reportes() {
                         </div>
                         <div style={{ textAlign: 'right' }}>
                           <span style={{ fontWeight: '700', fontSize: '0.95rem' }}>{montoMetodo(m)}</span>
-                          <span style={{ fontSize: '0.8rem', color: '#666', marginLeft: '0.5rem' }}>({pct.toFixed(1)}%)</span>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>({pct.toFixed(1)}%)</span>
                         </div>
                       </div>
-                      <div style={{ height: '10px', background: '#1F1F1F', borderRadius: '5px', overflow: 'hidden' }}>
+                      <div style={{ height: '10px', background: 'var(--bg-elevated)', borderRadius: '5px', overflow: 'hidden' }}>
                         <div style={{
                           width: `${barPct}%`, height: '100%', background: color,
                           borderRadius: '5px', transition: 'width 0.5s ease',
                           boxShadow: `0 0 8px ${color}55`,
                         }} />
                       </div>
-                      <div style={{ fontSize: '0.77rem', color: '#555', marginTop: '0.25rem' }}>
+                      <div style={{ fontSize: '0.77rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                         Ref. {formatDolares(m.total_usd)}
                       </div>
                     </div>
@@ -1327,7 +1345,7 @@ export default function Reportes() {
                 })}
               </div>
             ) : (
-              <p style={{ color: '#555', textAlign: 'center', padding: '2rem 0' }}>Sin cobros en este rango de fechas</p>
+              <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem 0' }}>Sin cobros en este rango de fechas</p>
             )}
           </div>
 
@@ -1359,10 +1377,10 @@ export default function Reportes() {
                         </td>
                         <td style={{ textAlign: 'center' }}>{m.transacciones}</td>
                         <td style={{ textAlign: 'right' }}><strong>{montoMetodo(m)}</strong></td>
-                        <td style={{ textAlign: 'right', color: '#A3A3A3' }}>
+                        <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>
                           {formatDolares(m.total_usd)}
                         </td>
-                        <td style={{ textAlign: 'right', color: '#A3A3A3' }}>{pct}%</td>
+                        <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{pct}%</td>
                       </tr>
                     );
                   })}
@@ -1372,13 +1390,13 @@ export default function Reportes() {
                 </tbody>
                 {metodosOrdenados.length > 0 && (
                   <tfoot>
-                    <tr style={{ borderTop: '2px solid #262626' }}>
+                    <tr style={{ borderTop: '2px solid var(--border)' }}>
                       <td><strong>TOTAL</strong></td>
                       <td style={{ textAlign: 'center' }}>
                         <strong>{metodosOrdenados.reduce((s, m) => s + m.transacciones, 0)}</strong>
                       </td>
                       <td style={{ textAlign: 'right' }}><strong style={{ color: '#22C55E' }}>{formatBs(totalBs)}</strong></td>
-                      <td style={{ textAlign: 'right' }}><strong style={{ color: '#A3A3A3' }}>{formatDolares(totalUSD)}</strong></td>
+                      <td style={{ textAlign: 'right' }}><strong style={{ color: 'var(--text-secondary)' }}>{formatDolares(totalUSD)}</strong></td>
                       <td style={{ textAlign: 'right' }}><strong>100%</strong></td>
                     </tr>
                   </tfoot>
@@ -1468,7 +1486,7 @@ export default function Reportes() {
                           <span className={`badge ${bajo ? 'badge--danger' : 'badge--success'}`}>{p.stock}</span>
                         </td>
                         <td style={{ textAlign: 'right' }}><strong>{formatBs(vBs)}</strong></td>
-                        <td style={{ textAlign: 'right', color: '#A3A3A3' }}>{formatDolares(vUSD)}</td>
+                        <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>{formatDolares(vUSD)}</td>
                       </tr>
                     );
                   })}

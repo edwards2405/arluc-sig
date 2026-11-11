@@ -14,6 +14,7 @@ import { formatFecha as formatearFecha } from '../../utils/formatters';
 import { fetchCuentasOperativas, fetchMovimientosCuenta } from '../../services/contabilidadService';
 import Pagination from '../../components/common/Pagination';
 import usePaginacion from '../../hooks/usePaginacion';
+import { hoyLocal, validarRango } from '../../utils/validaciones';
 
 function cuentaEsDeudora(cuenta) {
   return cuenta?.naturaleza?.toUpperCase() === 'DEUDORA'
@@ -116,8 +117,12 @@ export default function LibroMayor() {
     return agregarSaldoAcumulado(movimientos, cuentaEsDeudora(cuentaActiva));
   }, [movimientos, cuentaActiva]);
 
+  // Rango inválido: se muestra el error y no se listan movimientos
+  const errorRango = validarRango(fechaDesde, fechaHasta);
+
   // El saldo acumulado conserva los movimientos anteriores al rango filtrado.
   const movimientosFiltrados = useMemo(() => {
+    if (validarRango(fechaDesde, fechaHasta)) return [];
     return movimientosConSaldo.filter((m) => {
       const fecha = m.asientos_contables?.fecha;
       if (!fecha) return true;
@@ -338,6 +343,7 @@ export default function LibroMayor() {
               <input
                 type="date"
                 value={fechaDesde}
+                max={fechaHasta || hoyLocal()}
                 onChange={(e) => setFechaDesde(e.target.value)}
                 style={{
                   width: '100%',
@@ -356,6 +362,8 @@ export default function LibroMayor() {
               <input
                 type="date"
                 value={fechaHasta}
+                min={fechaDesde || undefined}
+                max={hoyLocal()}
                 onChange={(e) => setFechaHasta(e.target.value)}
                 style={{
                   width: '100%',
@@ -389,6 +397,11 @@ export default function LibroMayor() {
             >
               Limpiar filtro de fechas
             </button>
+          )}
+          {errorRango && (
+            <p className="text-danger" role="alert" style={{ margin: '0.5rem 0 0', fontSize: '0.8rem' }}>
+              {errorRango}
+            </p>
           )}
         </div>
 

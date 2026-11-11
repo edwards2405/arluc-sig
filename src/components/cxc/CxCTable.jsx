@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  HiOutlineCreditCard,
   HiOutlineBanknotes,
   HiOutlineClock,
   HiOutlineExclamationTriangle,
@@ -19,6 +18,7 @@ export default function CxCTable({
   onOpenAbonos,
   onOpenConfig,
   onVerArticulos,
+  puedeAbonar = true,
 }) {
 
   return (
@@ -34,15 +34,17 @@ export default function CxCTable({
               <th>
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
                   <span>Recargo por Días</span>
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--xs"
-                    onClick={onOpenConfig}
-                    title="Configurar regla general de días y porcentaje"
-                    style={{ padding: '2px', color: '#6366F1' }}
-                  >
-                    <HiOutlineCog6Tooth />
-                  </button>
+                  {onOpenConfig && (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--xs"
+                      onClick={onOpenConfig}
+                      title="Configurar regla general de días y porcentaje"
+                      style={{ padding: '2px', color: '#6366F1' }}
+                    >
+                      <HiOutlineCog6Tooth />
+                    </button>
+                  )}
                 </div>
               </th>
               <th>Saldo Pendiente</th>
@@ -280,7 +282,7 @@ export default function CxCTable({
                               porcentajeAplicado: pctEfectivo,
                             })
                           }
-                          title="Gestionar abonos o liquidar cuenta"
+                          title={puedeAbonar ? 'Gestionar abonos o liquidar cuenta' : 'Ver el historial de abonos'}
                         >
                           <HiOutlineBanknotes /> Abonos
                         </button>

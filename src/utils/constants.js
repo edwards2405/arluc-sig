@@ -20,25 +20,6 @@ export const METODOS_INICIAL_CASHEA = [
   { id: 'zelle', label: 'Zelle', requiereReferencia: true },
 ];
 
-// Roles del sistema
-export const ROLES = {
-  ADMIN: 'admin',
-  VENDEDOR: 'vendedor',
-};
-
-// Estados de factura
-export const ESTADOS_FACTURA = {
-  EMITIDA: 'emitida',
-  ANULADA: 'anulada',
-};
-
-// Estados de orden de compra
-export const ESTADOS_ORDEN = {
-  PENDIENTE: 'pendiente',
-  RECIBIDA: 'recibida',
-  CANCELADA: 'cancelada',
-};
-
 // Configuración de impresión
 export const PRINT_WIDTHS = {
   '58mm': { width: '58mm', chars: 32, pixelWidth: '164px' },
@@ -55,9 +36,15 @@ export const DEFAULT_EMPRESA = {
   slogan: '¡Gracias por su compra!',
 };
 
+// Clave y evento de la configuración guardada en el navegador. La clave
+// anterior (dj7_empresa_config) se sigue leyendo para no perder lo ya guardado.
+const CLAVE_EMPRESA = 'arluc_empresa_config';
+const CLAVE_EMPRESA_ANTERIOR = 'dj7_empresa_config';
+export const EVENTO_EMPRESA_ACTUALIZADA = 'arluc_empresa_config_updated';
+
 export function getEmpresaConfig() {
   try {
-    const saved = localStorage.getItem('arluc_empresa_config') || localStorage.getItem('dj7_empresa_config');
+    const saved = localStorage.getItem(CLAVE_EMPRESA) || localStorage.getItem(CLAVE_EMPRESA_ANTERIOR);
     if (saved) {
       return { ...DEFAULT_EMPRESA, ...JSON.parse(saved) };
     }
@@ -69,15 +56,14 @@ export function getEmpresaConfig() {
 
 export function saveEmpresaConfig(config) {
   try {
-    localStorage.setItem('arluc_empresa_config', JSON.stringify(config));
+    localStorage.setItem(CLAVE_EMPRESA, JSON.stringify(config));
+    // Ya guardada con la clave nueva: la anterior deja de hacer falta
+    localStorage.removeItem(CLAVE_EMPRESA_ANTERIOR);
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('arluc_empresa_config_updated', { detail: config }));
-      window.dispatchEvent(new CustomEvent('dj7_empresa_config_updated', { detail: config }));
+      window.dispatchEvent(new CustomEvent(EVENTO_EMPRESA_ACTUALIZADA, { detail: config }));
     }
   } catch (e) {
     console.error('Error guardando config de empresa:', e);
   }
 }
-
-export const EMPRESA = DEFAULT_EMPRESA;
 

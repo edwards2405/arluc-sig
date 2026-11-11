@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
+import { useDialogo } from '../../components/common/DialogoProvider';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatMonto, formatBs, formatFecha } from '../../utils/formatters';
+import { puede } from '../../utils/permisos';
+import { mensajeError } from '../../utils/errores';
 import {
   HiOutlineLockClosed, HiOutlineLockOpen, HiOutlineEye, HiOutlineArrowPath, HiOutlineCheckCircle,
 } from 'react-icons/hi2';
@@ -15,9 +18,11 @@ const num = (v) => Number(v || 0).toLocaleString('es-VE', { minimumFractionDigit
 const tasaEjercicio = (e) => (Number(e.utilidad_usd) > 0 && Number(e.utilidad_ves) > 0 ? Number(e.utilidad_ves) / Number(e.utilidad_usd) : undefined);
 
 export default function CierreContable() {
+  const { confirmar } = useDialogo();
   const { profile } = useAuth();
-  const puedeCerrar = ['admin', 'contador'].includes(profile?.rol);
-  const esAdmin = profile?.rol === 'admin';
+  const puedeCerrar = puede(profile?.rol, 'cierre.mes');
+  const puedeCerrarEjercicio = puede(profile?.rol, 'cierre.ejercicio');
+  const esAdmin = puede(profile?.rol, 'cierre.reabrir');
   const [loading, setLoading] = useState(true);
   const [meses, setMeses] = useState([]);
   const [ejercicios, setEjercicios] = useState([]);
@@ -27,7 +32,7 @@ export default function CierreContable() {
 
   const cargar = useCallback(async () => {
     setLoading(true);
-    const [{ data: periodos }, { data: revals }, { data: ejer }, { data: config }, { data: primero }] = await Promise.all([
+    const respuestas = await Promise.all([
       supabase.from('periodos_contables').select('*').order('anio').order('mes'),
       supabase.from('asientos_contables').select('id, numero, fecha, referencia_id, total_debe, total_debe_ves, tasa_cambio')
         .eq('referencia_tipo', 'REVALUACION').eq('modulo', 'Ajuste').eq('estado', 'ASENTADO'),
@@ -35,6 +40,14 @@ export default function CierreContable() {
       supabase.from('configuracion_empresa').select('mes_cierre_ejercicio').eq('id', 'default').maybeSingle(),
       supabase.from('asientos_contables').select('fecha').order('fecha').limit(1).maybeSingle(),
     ]);
+    // Si falla alguna consulta no se muestra una lista incompleta como si fuera la real
+    const errorCarga = respuestas.find((r) => r.error)?.error;
+    if (errorCarga) {
+      toast.error('Error cargando los períodos contables: ' + mensajeError(errorCarga));
+      setLoading(false);
+      return;
+    }
+    const [{ data: periodos }, { data: revals }, { data: ejer }, { data: config }, { data: primero }] = respuestas;
 
     // Todos los meses desde el primer asiento hasta el mes en curso
     const lista = [];
@@ -59,40 +72,42 @@ export default function CierreContable() {
 
   async function verRevaluacion(m) {
     const { data, error } = await supabase.rpc('vista_revaluacion', { p_anio: m.anio, p_mes: m.mes });
-    if (error) { toast.error(error.message); return; }
+    if (error) { toast.error(mensajeError(error)); return; }
     setVista({ ...m, filas: data || [] });
   }
 
   async function cerrar(m) {
-    if (!window.confirm(`¿Cerrar ${MESES[m.mes]} ${m.anio}? Se registrará la revaluación cambiaria al ${formatFecha(m.fin)} y el mes quedará bloqueado.`)) return;
+    if (!(await confirmar({ titulo: 'Cerrar mes', mensaje: `¿Cerrar ${MESES[m.mes]} ${m.anio}? Se registrará la revaluación cambiaria al ${formatFecha(m.fin)} y el mes quedará bloqueado.`, textoConfirmar: 'Cerrar mes' }))) return;
     setProcesando(`${m.anio}-${m.mes}`);
     const { data, error } = await supabase.rpc('cerrar_mes', { p_anio: m.anio, p_mes: m.mes });
     setProcesando(null);
-    if (error) { toast.error(error.message); return; }
+    if (error) { toast.error(mensajeError(error)); return; }
     toast.success(`${MESES[m.mes]} ${m.anio} cerrado · tasa de cierre ${num(data.tasa_cierre)}`);
     setVista(null);
     cargar();
   }
 
   async function reabrir(m) {
-    if (!window.confirm(`¿Reabrir ${MESES[m.mes]} ${m.anio}? Se revertirá su revaluación cambiaria.`)) return;
+    if (!(await confirmar({ titulo: 'Reabrir mes', mensaje: `¿Reabrir ${MESES[m.mes]} ${m.anio}? Se revertirá su revaluación cambiaria.`, variante: 'danger', textoConfirmar: 'Reabrir' }))) return;
     const { error } = await supabase.rpc('reabrir_periodo', { p_anio: m.anio, p_mes: m.mes });
-    if (error) { toast.error(error.message); return; }
+    if (error) { toast.error(mensajeError(error)); return; }
     toast.success(`${MESES[m.mes]} ${m.anio} reabierto`);
     cargar();
   }
 
   async function cerrarEjercicio(anio) {
-    if (!window.confirm(`¿Cerrar el ejercicio económico ${anio}? Se cancelan ingresos, costos y gastos contra el resultado, se traslada a utilidades no distribuidas y se constituye la reserva legal. No se puede deshacer.`)) return;
+    if (!(await confirmar({ titulo: 'Cerrar ejercicio', mensaje: `¿Cerrar el ejercicio económico ${anio}? Se cancelan ingresos, costos y gastos contra el resultado, se traslada a utilidades no distribuidas y se constituye la reserva legal. No se puede deshacer.`, variante: 'danger', textoConfirmar: 'Cerrar ejercicio' }))) return;
     const { data, error } = await supabase.rpc('cerrar_ejercicio', { p_anio: anio });
-    if (error) { toast.error(error.message); return; }
+    if (error) { toast.error(mensajeError(error)); return; }
     toast.success(`Ejercicio ${anio} cerrado · resultado ${formatBs(data.utilidad_ves)} · reserva legal ${formatMonto(data.reserva_legal_usd, tasaEjercicio(data))}`);
     cargar();
   }
 
   // Ejercicio candidato a cierre: el último que ya terminó y no está cerrado
   const anioActual = new Date().getFullYear();
-  const candidato = [anioActual, anioActual - 1].find((a) => finDeMes(a, mesCierre) < hoy() && !ejercicios.some((e) => e.anio === a));
+  const candidato = [anioActual, anioActual - 1].find((a) => finDeMes(a, mesCierre) < hoy() && !ejercicios.some((e) => e.anio === a)
+    // y que tuvo operaciones: un año sin asientos no tiene nada que cerrar
+    && meses.some((m) => m.anio === a));
 
   if (loading) return <div className="page-loading"><div className="loading-spinner" /><p>Cargando períodos...</p></div>;
 
@@ -192,7 +207,7 @@ export default function CierreContable() {
         <p style={{ marginBottom: '0.85rem' }}>
           El ejercicio termina el último día de <strong>{MESES[mesCierre]}</strong> (según los estatutos; se configura en la empresa).
         </p>
-        {candidato && puedeCerrar && (
+        {candidato && puedeCerrarEjercicio && (
           <button className="btn btn--primary" style={{ marginBottom: '1rem' }} onClick={() => cerrarEjercicio(candidato)}>
             <HiOutlineCheckCircle /> Cerrar ejercicio {candidato} (al {formatFecha(finDeMes(candidato, mesCierre))})
           </button>

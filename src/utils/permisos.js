@@ -53,3 +53,42 @@ export function rutaInicio(rol) {
   if (rol === 'gerente' || rol === 'contador') return '/panel-gerencial';
   return '/dashboard';
 }
+
+/**
+ * Acciones dentro de las pantallas: quién puede ejecutarlas. Replica las
+ * políticas y funciones de la base de datos para no mostrar botones que la
+ * BD rechazaría (un UPDATE o DELETE rechazado por RLS no da error: afecta 0 filas).
+ */
+export const ACCIONES = {
+  'producto.editar': ['admin', 'almacenista'],
+  'producto.exento': ['admin'],
+  'categoria.editar': ['admin', 'almacenista'],
+  'proveedor.editar': ['admin', 'almacenista'],
+  'orden.gestionar': ['admin', 'almacenista'],
+  'cliente.editar': ['admin', 'gerente', 'vendedor'],
+  'cliente.eliminar': ['admin'],
+  'cliente.credito': ['admin', 'gerente'],
+  'cliente.contribuyente': ['admin', 'gerente', 'contador'],
+  'factura.anular': ['admin', 'gerente'],
+  'nota.emitir': ['admin', 'gerente'],
+  'abono.registrar': ['admin', 'gerente', 'vendedor'],
+  'abono.anular': ['admin', 'gerente'],
+  'cxc.configurar': ['admin', 'gerente'],
+  'cxp.pagar': ['admin', 'gerente', 'contador'],
+  'cuenta.editar': ['admin', 'contador'],
+  'asiento.crear': ['admin', 'contador'],
+  'asiento.anular': ['admin', 'contador'],
+  'retencion.gestionar': ['admin', 'contador'],
+  'cierre.mes': ['admin', 'contador'],
+  'cierre.reabrir': ['admin'],
+  'cierre.ejercicio': ['admin', 'contador'],
+  'meta.editar': ['admin', 'gerente'],
+  'empresa.editar': ['admin', 'gerente'],
+  'empresa.fiscal': ['admin'],
+  'tasa.manual': ['admin'],
+  'usuario.gestionar': ['admin'],
+};
+
+export function puede(rol, accion) {
+  return (ACCIONES[accion] || []).includes(rol);
+}

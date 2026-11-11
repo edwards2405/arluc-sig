@@ -5,11 +5,11 @@ import { formatTasa, formatFecha, parseFecha } from '../utils/formatters';
 import { fetchTasaBCV, sincronizarTasaBCV } from '../services/bcvService';
 import toast from 'react-hot-toast';
 import Pagination from '../components/common/Pagination';
+import { mensajeError } from '../utils/errores';
 import {
   HiOutlinePlus,
   HiOutlineCurrencyDollar,
   HiOutlineArrowPath,
-  HiOutlineCheckBadge,
   HiOutlineGlobeAlt,
 } from 'react-icons/hi2';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -45,7 +45,7 @@ export default function TasaCambio() {
 
   async function loadTasas() {
     setLoading(true);
-    const [{ data, error }, { data: sync }] = await Promise.all([
+    const [{ data, error }, { data: sync, error: errorSync }] = await Promise.all([
       supabase
         .from('tasas_cambio')
         .select('*, usuarios!tasas_cambio_registrado_por_fkey(nombre_completo)')
@@ -56,7 +56,9 @@ export default function TasaCambio() {
 
     if (error) {
       console.error('Error loading tasas:', error);
+      toast.error(mensajeError(error, 'No se pudieron cargar las tasas de cambio'));
     }
+    if (errorSync) toast.error(mensajeError(errorSync, 'No se pudo cargar la bitácora de sincronización'));
     setTasas(data || []);
     setBitacora(sync || []);
     setLoading(false);
@@ -80,7 +82,7 @@ export default function TasaCambio() {
       informarResultado(await sincronizarTasaBCV());
       await Promise.all([loadTasas(), checkBCVRate()]);
     } catch (error) {
-      toast.error(`Error al sincronizar BCV: ${error.message}`);
+      toast.error(`Error al sincronizar BCV: ${mensajeError(error)}`);
     } finally {
       setSyncingBCV(false);
     }
@@ -98,7 +100,7 @@ export default function TasaCambio() {
       p_usd: parseFloat(nuevaTasa),
     });
     if (error) {
-      toast.error(error.message);
+      toast.error(mensajeError(error, 'No se pudo registrar la tasa'));
       return;
     }
     informarResultado(data);
@@ -171,15 +173,15 @@ export default function TasaCambio() {
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: '0.75rem', color: '#A3A3A3', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tasa Oficial BCV</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tasa Oficial BCV</div>
                 <div style={{ fontSize: '1.35rem', fontWeight: '800', color: '#22C55E' }}>
                   {formatTasa(bcvData.tasa_usd)}
                 </div>
               </div>
               {bcvData.tasa_eur > 0 && (
                 <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '0.75rem', color: '#A3A3A3', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Euro BCV</div>
-                  <div style={{ fontSize: '1.15rem', fontWeight: '700', color: '#E5E5E5' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Euro BCV</div>
+                  <div style={{ fontSize: '1.15rem', fontWeight: '700', color: 'var(--text-primary)' }}>
                     {formatTasa(bcvData.tasa_eur)}
                   </div>
                 </div>

@@ -2,16 +2,23 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatMonto, formatFecha } from '../utils/formatters';
-import { ESTADOS_ORDEN } from '../utils/constants';
 import toast from 'react-hot-toast';
+import { puede } from '../utils/permisos';
+import { mensajeError, exigirFilas } from '../utils/errores';
+import { validarMonto } from '../utils/validaciones';
+import { useDialogo } from '../components/common/DialogoProvider';
 import Pagination from '../components/common/Pagination';
 import {
   HiOutlinePlus, HiOutlineCheckCircle, HiOutlineXCircle,
-  HiOutlineEye, HiOutlineTrash, HiOutlineMagnifyingGlass,
+  HiOutlineEye, HiOutlineTrash,
 } from 'react-icons/hi2';
 
+const ETIQUETA_ESTADO = { pendiente: 'Pendiente', recibida: 'Recibida', cancelada: 'Cancelada' };
+
 export default function OrdenesCompra() {
+  const { confirmar, pedirDatos } = useDialogo();
   const { profile } = useAuth();
+  const puedeGestionar = puede(profile?.rol, 'orden.gestionar');
   const [ordenes, setOrdenes] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [productos, setProductos] = useState([]);
@@ -30,6 +37,8 @@ export default function OrdenesCompra() {
       supabase.from('proveedores').select('*').eq('activo', true).order('nombre'),
       supabase.from('productos').select('id, nombre, sku').eq('activo', true).order('nombre'),
     ]);
+    const fallida = [ordRes, provRes, prodRes].find(r => r.error);
+    if (fallida) toast.error(mensajeError(fallida.error, 'No se pudieron cargar las órdenes de compra'));
     setOrdenes(ordRes.data || []);
     setProveedores(provRes.data || []);
     setProductos(prodRes.data || []);
@@ -55,10 +64,23 @@ export default function OrdenesCompra() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!form.proveedor_id) { toast.error('Seleccione un proveedor'); return; }
-    if (form.items.some(i => !i.producto_id || !i.precio_unitario_usd)) { toast.error('Complete todos los items'); return; }
+    if (form.items.length === 0) { toast.error('Agregue al menos un producto'); return; }
+    for (const [i, item] of form.items.entries()) {
+      const linea = `Línea ${i + 1}`;
+      if (!item.producto_id) { toast.error(`${linea}: seleccione el producto`); return; }
+      const cantidad = Number(item.cantidad);
+      if (!Number.isInteger(cantidad) || cantidad <= 0) {
+        toast.error(`${linea}: la cantidad debe ser un número entero mayor que 0`);
+        return;
+      }
+      const errorCosto = validarMonto(item.precio_unitario_usd, { etiqueta: `${linea}: el costo unitario` });
+      if (errorCosto) { toast.error(errorCosto); return; }
+    }
 
     try {
-      const { data: numData } = await supabase.rpc('generar_numero_orden');
+      const { data: numData, error: numError } = await supabase.rpc('generar_numero_orden');
+      if (numError) throw numError;
+      if (!numData) throw new Error('No se pudo generar el número de la orden');
       const { data: orden, error } = await supabase.from('ordenes_compra').insert({
         numero_orden: numData,
         proveedor_id: form.proveedor_id,
@@ -75,43 +97,56 @@ export default function OrdenesCompra() {
         precio_unitario_usd: parseFloat(item.precio_unitario_usd),
       }));
       const { error: detError } = await supabase.from('detalles_orden_compra').insert(detalles);
-      if (detError) throw detError;
+      if (detError) {
+        // Sin líneas la orden no sirve: se borra la cabecera recién creada
+        await supabase.from('ordenes_compra').delete().eq('id', orden.id).select('id');
+        throw detError;
+      }
 
       toast.success(`Orden ${numData} creada`);
       setShowModal(false);
       setForm({ proveedor_id: '', notas: '', items: [{ producto_id: '', cantidad: 1, precio_unitario_usd: '' }] });
       loadData();
     } catch (error) {
-      toast.error(error.message);
+      toast.error(mensajeError(error, 'Error al crear la orden de compra'));
     }
   }
 
-  async function cambiarEstado(id, estado) {
+  async function cambiarEstado(orden, estado) {
     const cambios = { estado };
     if (estado === 'recibida') {
       // Datos de la factura del proveedor: los exige el Libro de Compras
-      const factura = prompt('N° de factura del proveedor:');
-      if (!factura?.trim()) return;
-      const control = prompt('N° de control de la factura del proveedor:');
-      if (!control?.trim()) return;
-      if (!confirm('¿Registrar la recepción? Se actualizará el inventario, la cuenta por pagar y la retención de IVA.')) return;
-      cambios.numero_factura_proveedor = factura.trim();
-      cambios.numero_control_proveedor = control.trim();
-    } else if (!confirm('¿Cancelar esta orden?')) {
+      const datos = await pedirDatos({
+        titulo: 'Recibir mercancía',
+        mensaje: 'Se actualizará el inventario, la cuenta por pagar y la retención de IVA. Los datos de la factura del proveedor van al Libro de Compras.',
+        textoConfirmar: 'Registrar recepción',
+        campos: [
+          { clave: 'factura', etiqueta: 'N° de factura del proveedor', maximo: 30, placeholder: 'Ej.: 000123',
+            patron: /^[A-Za-z0-9-]+$/, mensajePatron: 'Solo letras, números y guiones' },
+          { clave: 'control', etiqueta: 'N° de control', maximo: 30, placeholder: 'Ej.: 00-000123',
+            patron: /^[A-Za-z0-9-]+$/, mensajePatron: 'Solo letras, números y guiones' },
+        ],
+      });
+      if (!datos) return;
+      cambios.numero_factura_proveedor = datos.factura;
+      cambios.numero_control_proveedor = datos.control;
+    } else if (!(await confirmar({ titulo: 'Cancelar orden', mensaje: '¿Seguro que desea cancelar esta orden de compra?', variante: 'danger', textoConfirmar: 'Cancelar orden', textoCancelar: 'Volver' }))) {
       return;
     }
     try {
-      const { error } = await supabase.from('ordenes_compra').update(cambios).eq('id', id);
+      const { data, error } = await supabase.from('ordenes_compra').update(cambios).eq('id', orden.id).select('id');
       if (error) throw error;
-      toast.success(`Orden ${estado}`);
+      exigirFilas(data);
+      toast.success(`Orden ${orden.numero_orden} ${estado}`);
       loadData();
     } catch (error) {
-      toast.error(error.message);
+      toast.error(mensajeError(error, 'Error al actualizar la orden'));
     }
   }
 
   async function verDetalle(orden) {
-    const { data } = await supabase.from('detalles_orden_compra').select('*, productos(nombre, sku)').eq('orden_id', orden.id);
+    const { data, error } = await supabase.from('detalles_orden_compra').select('*, productos(nombre, sku)').eq('orden_id', orden.id);
+    if (error) { toast.error(mensajeError(error, 'No se pudo cargar el detalle de la orden')); return; }
     setShowDetalle({ ...orden, detalles: data || [] });
   }
 
@@ -124,7 +159,9 @@ export default function OrdenesCompra() {
     <div className="page">
       <div className="page__header">
         <h1 className="page__title">Órdenes de Compra</h1>
-        <button className="btn btn--primary" onClick={() => setShowModal(true)}><HiOutlinePlus /> Nueva Orden</button>
+        {puedeGestionar && (
+          <button className="btn btn--primary" onClick={() => setShowModal(true)}><HiOutlinePlus /> Nueva Orden</button>
+        )}
       </div>
 
       <div className="card">
@@ -141,17 +178,17 @@ export default function OrdenesCompra() {
                   <td>{formatMonto(o.total_usd)}</td>
                   <td>
                     <span className={`badge badge--${o.estado === 'recibida' ? 'success' : o.estado === 'cancelada' ? 'danger' : 'warning'}`}>
-                      {o.estado.charAt(0).toUpperCase() + o.estado.slice(1)}
+                      {ETIQUETA_ESTADO[o.estado] || o.estado}
                     </span>
                   </td>
                   <td>{formatFecha(o.fecha_orden)}</td>
                   <td>
                     <div className="table__actions">
                       <button className="btn btn--ghost btn--xs" onClick={() => verDetalle(o)}><HiOutlineEye /></button>
-                      {o.estado === 'pendiente' && (
+                      {puedeGestionar && o.estado === 'pendiente' && (
                         <>
-                          <button className="btn btn--ghost btn--xs text-success" onClick={() => cambiarEstado(o.id, 'recibida')} title="Marcar recibida"><HiOutlineCheckCircle /></button>
-                          <button className="btn btn--ghost btn--xs text-danger" onClick={() => cambiarEstado(o.id, 'cancelada')} title="Cancelar"><HiOutlineXCircle /></button>
+                          <button className="btn btn--ghost btn--xs text-success" onClick={() => cambiarEstado(o, 'recibida')} title="Marcar recibida"><HiOutlineCheckCircle /></button>
+                          <button className="btn btn--ghost btn--xs text-danger" onClick={() => cambiarEstado(o, 'cancelada')} title="Cancelar"><HiOutlineXCircle /></button>
                         </>
                       )}
                     </div>
@@ -174,24 +211,29 @@ export default function OrdenesCompra() {
       {showDetalle && (
         <div className="modal-overlay" onClick={() => setShowDetalle(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal__header"><h2>Orden {showDetalle.numero_orden}</h2></div>
+            <div className="modal__header">
+              <h2>Orden {showDetalle.numero_orden}</h2>
+              <button className="modal__close" onClick={() => setShowDetalle(null)}>×</button>
+            </div>
             <div className="modal__form">
               <p><strong>Proveedor:</strong> {showDetalle.proveedores?.nombre}</p>
-              <p><strong>Estado:</strong> {showDetalle.estado}</p>
+              <p><strong>Estado:</strong> {ETIQUETA_ESTADO[showDetalle.estado] || showDetalle.estado}</p>
               <p><strong>Notas:</strong> {showDetalle.notas || '—'}</p>
-              <table className="table">
-                <thead><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th>Subtotal</th></tr></thead>
-                <tbody>
-                  {showDetalle.detalles.map(d => (
-                    <tr key={d.id}>
-                      <td>{d.productos?.nombre}</td>
-                      <td>{d.cantidad}</td>
-                      <td>{formatMonto(d.precio_unitario_usd)}</td>
-                      <td>{formatMonto(d.subtotal)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="table-container">
+                <table className="table">
+                  <thead><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th>Subtotal</th></tr></thead>
+                  <tbody>
+                    {showDetalle.detalles.map(d => (
+                      <tr key={d.id}>
+                        <td>{d.productos?.nombre}</td>
+                        <td>{d.cantidad}</td>
+                        <td>{formatMonto(d.precio_unitario_usd)}</td>
+                        <td>{formatMonto(d.subtotal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               <div className="pos-totals__row pos-totals__row--total" style={{ marginTop: '1rem' }}>
                 <span>Total:</span><span>{formatMonto(showDetalle.total_usd)}</span>
               </div>
@@ -233,11 +275,11 @@ export default function OrdenesCompra() {
                   </div>
                   <div className="form-group">
                     <label>Cantidad</label>
-                    <input type="number" min="1" value={item.cantidad} onChange={e => updateItem(index, 'cantidad', e.target.value)} required />
+                    <input type="number" min="1" step="1" value={item.cantidad} onChange={e => updateItem(index, 'cantidad', e.target.value)} required />
                   </div>
                   <div className="form-group">
                     <label>Precio USD</label>
-                    <input type="number" step="0.01" min="0" value={item.precio_unitario_usd} onChange={e => updateItem(index, 'precio_unitario_usd', e.target.value)} required />
+                    <input type="number" step="0.01" min="0.01" value={item.precio_unitario_usd} onChange={e => updateItem(index, 'precio_unitario_usd', e.target.value)} required />
                   </div>
                   {form.items.length > 1 && (
                     <button type="button" className="btn btn--ghost btn--xs text-danger" onClick={() => removeItem(index)}><HiOutlineTrash /></button>

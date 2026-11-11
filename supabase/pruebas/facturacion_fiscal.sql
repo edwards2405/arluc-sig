@@ -21,7 +21,7 @@ create function pg_temp.item(p_sku text, p_cant int) returns jsonb language sql 
 select pg_temp.como('vendedor@arluc.test');
 select stock as stock_antes from productos where sku = 'AUD-001' \gset
 select id as fact_a, numero_factura, numero_control, base_imponible_usd base, iva_usd iva, igtf_usd igtf, total_usd
-  from emitir_factura(null, pg_temp.item('AUD-001', 1), '[{"metodo_id":"efectivo_usd","monto_usd":324.80}]') \gset
+  from emitir_factura(pg_temp.cli('V-17654321'), pg_temp.item('AUD-001', 1), '[{"metodo_id":"efectivo_usd","monto_usd":324.80}]') \gset
 \echo :numero_factura :numero_control base=:base iva=:iva igtf=:igtf total=:total_usd
 
 \echo '=== B. Mixto: pago móvil + Zelle (IGTF solo sobre la parte en divisas)'
@@ -29,7 +29,7 @@ select total_usd, igtf_usd, jsonb_path_query_array(metodos_pago, '$[*].igtf_usd'
   from emitir_factura(pg_temp.cli('V-24651980'),
          jsonb_build_array(jsonb_build_object('producto_id', pg_temp.prod('DJ-002'), 'cantidad', 2),
                            jsonb_build_object('producto_id', pg_temp.prod('CAB-001'), 'cantidad', 4)),
-         '[{"metodo_id":"pago_movil","monto_usd":100,"referencia":"PM-1"},{"metodo_id":"zelle","monto_usd":85.60,"zelle_titular":"M R","zelle_email":"m@r.test"}]');
+         '[{"metodo_id":"pago_movil","monto_usd":100,"referencia":"PM-1"},{"metodo_id":"zelle","monto_usd":85.60,"referencia":"ZL-4521","zelle_titular":"M R","zelle_email":"m@r.test"}]');
 
 \echo '=== C1. Crédito que excede la línea de Carlos como vendedor (debe fallar)'
 select numero_factura from emitir_factura(pg_temp.cli('V-19842516'), pg_temp.item('AUD-002', 1),
@@ -42,13 +42,13 @@ select numero_factura, total_usd from emitir_factura(pg_temp.cli('V-19842516'), 
 \echo '=== D. Cashea: inicial $100 por punto de venta, resto financiado'
 select pg_temp.como('vendedor@arluc.test');
 select total_usd, metodos_pago -> 0 ->> 'credito_cashea_usd' as financiado
-  from emitir_factura(null, pg_temp.item('LGT-001', 2),
-         '[{"metodo_id":"cashea","monto_usd":100,"referencia":"CSH-9","cashea_metodo_inicial":"punto_venta"}]');
+  from emitir_factura(pg_temp.cli('V-17654321'), pg_temp.item('LGT-001', 2),
+         '[{"metodo_id":"cashea","monto_usd":100,"referencia":"CSH-9","cashea_metodo_inicial":"punto_venta","cashea_referencia_inicial":"PV-8812"}]');
 
 \echo '=== E. Pago incompleto, pago excedido y stock insuficiente (deben fallar)'
-select emitir_factura(null, pg_temp.item('CAB-002', 1), '[{"metodo_id":"efectivo_bs","monto_usd":10}]');
-select emitir_factura(null, pg_temp.item('CAB-002', 1), '[{"metodo_id":"efectivo_bs","monto_usd":50}]');
-select emitir_factura(null, pg_temp.item('CAB-002', 9999), '[{"metodo_id":"efectivo_bs","monto_usd":208779.12}]');
+select emitir_factura(pg_temp.cli('V-17654321'), pg_temp.item('CAB-002', 1), '[{"metodo_id":"efectivo_bs","monto_usd":10}]');
+select emitir_factura(pg_temp.cli('V-17654321'), pg_temp.item('CAB-002', 1), '[{"metodo_id":"efectivo_bs","monto_usd":50}]');
+select emitir_factura(pg_temp.cli('V-17654321'), pg_temp.item('CAB-002', 9999), '[{"metodo_id":"efectivo_bs","monto_usd":208779.12}]');
 
 \echo '=== F. Anular la factura A (gerente): stock, contra-asiento'
 select pg_temp.como('gerente@arluc.test');
@@ -60,8 +60,8 @@ select numero, modulo, estado, total_debe from asientos_contables where referenc
 \echo '=== G. Compra recibida por almacén: costo promedio, CxP y asiento'
 select pg_temp.como('almacen@arluc.test');
 select costo_usd as costo_antes, stock as stock_antes from productos where sku = 'CAB-002';
-insert into ordenes_compra (numero_orden, proveedor_id, numero_factura_proveedor)
-values (generar_numero_orden(), (select id from proveedores where rif = 'J-29876543-2'), 'FP-7781')
+insert into ordenes_compra (numero_orden, proveedor_id, numero_factura_proveedor, numero_control_proveedor)
+values (generar_numero_orden(), (select id from proveedores where rif = 'J-29876543-2'), 'FP-7781', '00-7781')
 returning id as orden \gset
 insert into detalles_orden_compra (orden_id, producto_id, cantidad, precio_unitario_usd)
 values (:'orden', pg_temp.prod('CAB-002'), 20, 9.00);

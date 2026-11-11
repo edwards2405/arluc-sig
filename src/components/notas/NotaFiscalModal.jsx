@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabase';
 import { formatMonto, formatBs, formatDolares, formatFecha } from '../../utils/formatters';
 import { getEmpresaConfig } from '../../utils/constants';
+import { mensajeError } from '../../utils/errores';
 
 const REINTEGROS = [
   { id: 'efectivo_usd', label: 'Efectivo USD' },
@@ -68,12 +69,32 @@ export default function NotaFiscalModal({ factura, tipo, onClose, onEmitida }) {
   const [metodo, setMetodo] = useState('transferencia');
   const [guardando, setGuardando] = useState(false);
 
+  const [errorCarga, setErrorCarga] = useState(null);
+
   useEffect(() => {
     supabase.rpc('saldo_notas_factura', { p_factura_id: factura.id }).then(({ data, error }) => {
-      if (error) toast.error(error.message);
+      if (error || !data) {
+        setErrorCarga(mensajeError(error, 'No se pudo consultar el saldo de la factura.'));
+        return;
+      }
       setSaldo(data);
     });
   }, [factura.id]);
+
+  if (errorCarga) {
+    return (
+      <div className="modal-overlay" onClick={onClose} style={{ zIndex: 400 }}>
+        <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal__body">
+            <p className="text-danger" role="alert">{errorCarga}</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button type="button" className="btn btn--secondary" onClick={onClose}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!saldo) {
     return (
@@ -114,7 +135,7 @@ export default function NotaFiscalModal({ factura, tipo, onClose, onEmitida }) {
         });
     setGuardando(false);
     if (error) {
-      toast.error(error.message);
+      toast.error(mensajeError(error));
       return;
     }
     toast.success(`${data.numero} emitida por ${formatBs(data.total_bs)}`);

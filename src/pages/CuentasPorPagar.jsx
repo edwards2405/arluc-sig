@@ -4,6 +4,9 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatMonto, formatBs, formatDolares, formatFecha } from '../utils/formatters';
 import Pagination from '../components/common/Pagination';
+import { hoyLocal, validarMonto, validarReferencia } from '../utils/validaciones';
+import { puede } from '../utils/permisos';
+import { mensajeError } from '../utils/errores';
 import {
   HiOutlineMagnifyingGlass,
   HiOutlineBanknotes,
@@ -20,11 +23,14 @@ const METODOS_PAGO_PROVEEDOR = [
   { id: 'zelle', label: 'Zelle (genera IGTF)' },
 ];
 
-const hoy = () => new Date().toLocaleDateString('en-CA');
+// Métodos bancarios: exigen número de referencia.
+const METODOS_CON_REFERENCIA = ['transferencia', 'pago_movil', 'punto_venta', 'zelle'];
+
+const hoy = hoyLocal;
 
 export default function CuentasPorPagar() {
   const { profile } = useAuth();
-  const puedePagar = ['admin', 'gerente', 'contador'].includes(profile?.rol);
+  const puedePagar = puede(profile?.rol, 'cxp.pagar');
   const [loading, setLoading] = useState(true);
   const [cuentas, setCuentas] = useState([]);
   const [tasa, setTasa] = useState(0);
@@ -42,7 +48,7 @@ export default function CuentasPorPagar() {
 
   async function cargarDatos() {
     setLoading(true);
-    const [{ data, error }, { data: tasaData }] = await Promise.all([
+    const [{ data, error }, { data: tasaData, error: errorTasa }] = await Promise.all([
       supabase
         .from('cuentas_por_pagar')
         .select(`
@@ -52,11 +58,13 @@ export default function CuentasPorPagar() {
           pagos_cxp ( id, fecha, metodo_id, monto_usd, igtf_usd, monto_bs, diferencial_bs, referencia )
         `)
         .order('fecha_vencimiento'),
-      supabase.from('tasas_cambio').select('tasa_usd_bs').order('fecha_registro', { ascending: false }).limit(1).maybeSingle(),
+      // La tasa vigente a hoy (no la última fila: puede haber una registrada para mañana)
+      supabase.rpc('tasa_vigente', { p_fecha: hoy() }),
     ]);
-    if (error) toast.error('Error cargando cuentas por pagar: ' + error.message);
+    if (error) toast.error('Error cargando cuentas por pagar: ' + mensajeError(error));
+    if (errorTasa) toast.error('No se pudo obtener la tasa de cambio vigente: ' + mensajeError(errorTasa));
     setCuentas(data || []);
-    setTasa(Number(tasaData?.tasa_usd_bs || 0));
+    setTasa(Number(tasaData || 0));
     setLoading(false);
     return data || [];
   }
@@ -96,13 +104,26 @@ export default function CuentasPorPagar() {
 
   async function registrarPago(e) {
     e.preventDefault();
+    const errorMonto = validarMonto(form.monto, { etiqueta: 'El monto' });
+    if (errorMonto) {
+      toast.error(errorMonto);
+      return;
+    }
+    const requiereReferencia = METODOS_CON_REFERENCIA.includes(form.metodo);
+    if (requiereReferencia) {
+      const errorRef = validarReferencia(form.referencia);
+      if (errorRef) {
+        toast.error(errorRef);
+        return;
+      }
+    }
     setGuardando(true);
     try {
       const { data, error } = await supabase.rpc('pagar_cxp', {
         p_cxp_id: cuentaAPagar.id,
         p_monto_usd: parseFloat(form.monto),
         p_metodo_id: form.metodo,
-        p_referencia: form.referencia || null,
+        p_referencia: requiereReferencia ? form.referencia.trim() : (form.referencia.trim() || null),
         p_notas: form.notas || null,
       });
       if (error) throw error;
@@ -114,7 +135,7 @@ export default function CuentasPorPagar() {
       const actualizadas = await cargarDatos();
       setCuentaAPagar(actualizadas.find((c) => c.id === cuentaAPagar.id && c.estado === 'PENDIENTE') || null);
     } catch (err) {
-      toast.error(err.message);
+      toast.error(mensajeError(err));
     } finally {
       setGuardando(false);
     }
@@ -243,7 +264,11 @@ export default function CuentasPorPagar() {
                     </div>
                   </div>
                   <div className="form-row">
-                    <div className="form-group"><label>Referencia</label><input value={form.referencia} onChange={(e) => setForm({ ...form, referencia: e.target.value })} /></div>
+                    <div className="form-group">
+                      <label>Referencia{METODOS_CON_REFERENCIA.includes(form.metodo) ? ' *' : ''}</label>
+                      <input value={form.referencia} maxLength={30} required={METODOS_CON_REFERENCIA.includes(form.metodo)}
+                        onChange={(e) => setForm({ ...form, referencia: e.target.value })} />
+                    </div>
                     <div className="form-group"><label>Notas</label><input value={form.notas} onChange={(e) => setForm({ ...form, notas: e.target.value })} /></div>
                   </div>
                   <button type="submit" className="btn btn--primary btn--full" disabled={guardando}>

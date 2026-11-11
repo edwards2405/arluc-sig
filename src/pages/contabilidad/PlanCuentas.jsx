@@ -20,6 +20,9 @@ import {
   crearCuenta,
   toggleCuentaActiva,
 } from '../../services/contabilidadService';
+import { useAuth } from '../../contexts/AuthContext';
+import { puede } from '../../utils/permisos';
+import { mensajeError } from '../../utils/errores';
 
 const TIPOS_CUENTA = [
   { value: 'ACTIVO', label: 'Activo', color: 'var(--info)' },
@@ -205,30 +208,32 @@ function CuentaTreeNode({ cuenta, nivel, expandedIds, toggleExpand, onToggleActi
         </span>
 
         {/* Actions */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleActive(cuenta);
-          }}
-          style={{
-            background: 'none',
-            border: 'none',
-            color: cuenta.activo ? 'var(--text-muted)' : 'var(--primary)',
-            cursor: 'pointer',
-            padding: '0.3rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            minWidth: '36px',
-            minHeight: '36px',
-            borderRadius: '6px',
-            transition: 'all 0.15s ease',
-          }}
-          title={cuenta.activo ? 'Desactivar cuenta' : 'Reactivar cuenta'}
-        >
-          {cuenta.activo ? <HiOutlineEyeSlash size={16} /> : <HiOutlineEye size={16} />}
-        </button>
+        {onToggleActive && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleActive(cuenta);
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: cuenta.activo ? 'var(--text-muted)' : 'var(--primary)',
+              cursor: 'pointer',
+              padding: '0.3rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minWidth: '36px',
+              minHeight: '36px',
+              borderRadius: '6px',
+              transition: 'all 0.15s ease',
+            }}
+            title={cuenta.activo ? 'Desactivar cuenta' : 'Reactivar cuenta'}
+          >
+            {cuenta.activo ? <HiOutlineEyeSlash size={16} /> : <HiOutlineEye size={16} />}
+          </button>
+        )}
       </div>
 
       {/* Children */}
@@ -252,6 +257,8 @@ function CuentaTreeNode({ cuenta, nivel, expandedIds, toggleExpand, onToggleActi
 }
 
 export default function PlanCuentas() {
+  const { profile } = useAuth();
+  const puedeEditar = puede(profile?.rol, 'cuenta.editar');
   const [cuentas, setCuentas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -280,7 +287,7 @@ export default function PlanCuentas() {
       const padresIds = new Set(data.filter((c) => c.es_padre && !c.cuenta_padre_id).map((c) => c.id));
       setExpandedIds(padresIds);
     } catch (err) {
-      toast.error('Error al cargar plan de cuentas: ' + err.message);
+      toast.error('Error al cargar plan de cuentas: ' + mensajeError(err));
     } finally {
       setLoading(false);
     }
@@ -316,7 +323,7 @@ export default function PlanCuentas() {
       toast.success(cuenta.activo ? `Cuenta "${cuenta.codigo}" desactivada` : `Cuenta "${cuenta.codigo}" reactivada`);
       loadData();
     } catch (err) {
-      toast.error('Error: ' + err.message);
+      toast.error(mensajeError(err, 'No se pudo cambiar el estado de la cuenta'));
     }
   }
 
@@ -356,7 +363,7 @@ export default function PlanCuentas() {
       setForm({ codigo: '', nombre: '', tipo: 'ACTIVO', naturaleza: 'DEUDORA', es_padre: false, cuenta_padre_id: '' });
       loadData();
     } catch (err) {
-      toast.error('Error al crear cuenta: ' + err.message);
+      toast.error('Error al crear cuenta: ' + mensajeError(err));
     } finally {
       setSaving(false);
     }
@@ -388,9 +395,11 @@ export default function PlanCuentas() {
           <p className="page__subtitle">Estructura jerárquica del catálogo contable</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button className="btn btn--primary" onClick={() => setShowModal(true)}>
-            <HiOutlinePlus /> Nueva Cuenta
-          </button>
+          {puedeEditar && (
+            <button className="btn btn--primary" onClick={() => setShowModal(true)}>
+              <HiOutlinePlus /> Nueva Cuenta
+            </button>
+          )}
           <button className="btn btn--secondary" onClick={loadData} title="Refrescar">
             <HiOutlineArrowPath /> Refrescar
           </button>
@@ -552,7 +561,7 @@ export default function PlanCuentas() {
           <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
             <HiOutlineBookOpen style={{ fontSize: '2.5rem', opacity: 0.4, marginBottom: '0.5rem' }} />
             <p style={{ fontWeight: 600 }}>No hay cuentas contables</p>
-            <p style={{ fontSize: '0.85rem' }}>Cree la primera cuenta con el botón "Nueva Cuenta".</p>
+            {puedeEditar && <p style={{ fontSize: '0.85rem' }}>Cree la primera cuenta con el botón "Nueva Cuenta".</p>}
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
@@ -564,7 +573,7 @@ export default function PlanCuentas() {
                   nivel={0}
                   expandedIds={expandedIds}
                   toggleExpand={toggleExpand}
-                  onToggleActive={handleToggleActive}
+                  onToggleActive={puedeEditar ? handleToggleActive : null}
                   search={search}
                 />
               ))}

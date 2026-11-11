@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   HiOutlineBookOpen,
   HiOutlinePlus,
@@ -8,54 +8,128 @@ import {
   HiOutlineMagnifyingGlass,
   HiOutlineFunnel,
   HiOutlineXMark,
+  HiOutlineNoSymbol,
 } from 'react-icons/hi2';
 import toast from 'react-hot-toast';
 import {
   fetchAsientos,
   crearAsiento,
+  anularAsiento,
+  esAsientoAnulable,
   fetchCuentasOperativas,
   ORIGENES_CONTABLES,
 } from '../../services/contabilidadService';
 import { formatDolares } from '../../utils/formatters';
 import Pagination from '../../components/common/Pagination';
 import usePaginacion from '../../hooks/usePaginacion';
+import { supabase } from '../../lib/supabase';
+import { hoyLocal, tieneTexto } from '../../utils/validaciones';
+import { useAuth } from '../../contexts/AuthContext';
+import { useDialogo } from '../../components/common/DialogoProvider';
+import { puede } from '../../utils/permisos';
+import { mensajeError } from '../../utils/errores';
 
 const MODULOS = ORIGENES_CONTABLES;
+// Ventas y Compras solo los generan facturas y órdenes de compra.
+const MODULOS_MANUALES = ORIGENES_CONTABLES.filter(({ value }) => !['Ventas', 'Compras'].includes(value));
+
+/**
+ * Cuentas que admiten asientos manuales: las decide la BD (cuentas_asiento_manual),
+ * que excluye las de control (CxC, CxP, inventario, impuestos, ventas, costo).
+ * Caja y bancos sí se permiten: nómina, alquiler y gastos se pagan por banco.
+ */
+async function fetchCuentasManuales() {
+  const [cuentas, permitidas] = await Promise.all([
+    fetchCuentasOperativas(),
+    supabase.rpc('cuentas_asiento_manual'),
+  ]);
+  if (permitidas.error) throw permitidas.error;
+  const ids = new Set(permitidas.data.map((c) => c.id));
+  return cuentas.filter((c) => ids.has(c.id));
+}
 
 export default function LibroDiario() {
+  const { profile } = useAuth();
+  const { pedirTexto } = useDialogo();
+  const puedeCrear = puede(profile?.rol, 'asiento.crear');
+  const puedeAnular = puede(profile?.rol, 'asiento.anular');
   const [asientos, setAsientos] = useState([]);
   const [cuentas, setCuentas] = useState([]);
+  // loading: solo la carga inicial oculta la página; recargando: búsquedas y filtros
   const [loading, setLoading] = useState(true);
+  const [recargando, setRecargando] = useState(false);
+  const [anulandoId, setAnulandoId] = useState(null);
+  const [busqueda, setBusqueda] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterModulo, setFilterModulo] = useState('todos');
+  const ultimaConsulta = useRef(0);
   const { visibles: asientosPagina, paginacion } = usePaginacion(asientos, 10);
 
   // Modal crear asiento
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ fecha: new Date().toISOString().slice(0, 10), glosa: '', modulo: 'Manual' });
+  const [form, setForm] = useState({ fecha: hoyLocal(), glosa: '', modulo: 'Manual' });
   const [lineas, setLineas] = useState([
     { cuenta_id: '', debe: '', haber: '' },
     { cuenta_id: '', debe: '', haber: '' },
   ]);
 
+  // La búsqueda espera a que el usuario termine de escribir
+  useEffect(() => {
+    const espera = setTimeout(() => setSearchTerm(busqueda), 350);
+    return () => clearTimeout(espera);
+  }, [busqueda]);
+
   const loadData = useCallback(async () => {
-    setLoading(true);
+    const consulta = ++ultimaConsulta.current;
+    setRecargando(true);
     try {
-      const [asientosData, cuentasData] = await Promise.all([
-        fetchAsientos({ modulo: filterModulo, search: searchTerm }),
-        fetchCuentasOperativas(),
-      ]);
-      setAsientos(asientosData);
-      setCuentas(cuentasData);
+      const asientosData = await fetchAsientos({ modulo: filterModulo, search: searchTerm });
+      // Ignora respuestas de búsquedas ya superadas por otra más reciente
+      if (consulta === ultimaConsulta.current) setAsientos(asientosData);
     } catch (err) {
-      toast.error('Error cargando datos contables: ' + err.message);
+      toast.error('Error cargando el Libro Diario: ' + mensajeError(err));
     } finally {
-      setLoading(false);
+      if (consulta === ultimaConsulta.current) {
+        setLoading(false);
+        setRecargando(false);
+      }
     }
   }, [filterModulo, searchTerm]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Las cuentas del formulario no dependen de los filtros: se cargan una vez
+  useEffect(() => {
+    if (!puedeCrear) return;
+    fetchCuentasManuales()
+      .then(setCuentas)
+      .catch((err) => toast.error('Error cargando las cuentas contables: ' + mensajeError(err)));
+  }, [puedeCrear]);
+
+  async function handleAnular(asiento) {
+    const motivo = await pedirTexto({
+      titulo: `Anular asiento ${asiento.numero}`,
+      mensaje: 'Se registrará un asiento de reverso con la fecha de hoy. Esta acción no se puede deshacer.',
+      etiqueta: 'Motivo de la anulación',
+      minimo: 10,
+      maximo: 300,
+      multilinea: true,
+      variante: 'danger',
+      textoConfirmar: 'Anular asiento',
+    });
+    if (!motivo) return;
+    setAnulandoId(asiento.id);
+    try {
+      await anularAsiento(asiento.id, motivo);
+      toast.success(`Asiento ${asiento.numero} anulado`);
+      loadData();
+    } catch (err) {
+      toast.error(mensajeError(err));
+    } finally {
+      setAnulandoId(null);
+    }
+  }
 
   // ---- Helpers ----
   const formatBolivares = (amount) =>
@@ -104,10 +178,29 @@ export default function LibroDiario() {
   // ---- Submit ----
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!form.glosa.trim()) { toast.error('Ingrese un concepto / glosa'); return; }
+    if (!tieneTexto(form.glosa)) { toast.error('Ingrese un concepto / glosa'); return; }
+    if (!form.fecha) { toast.error('Ingrese la fecha contable'); return; }
+    if (form.fecha > hoyLocal()) { toast.error('La fecha del asiento no puede ser futura'); return; }
+    if (!MODULOS_MANUALES.some((m) => m.value === form.modulo)) {
+      toast.error('Los asientos de Ventas y Compras solo los generan facturas y órdenes de compra');
+      return;
+    }
+
+    // Cada línea: cuenta permitida y un monto mayor que 0 en el debe o en el haber
+    for (const [i, l] of lineas.entries()) {
+      const monto = (parseFloat(l.debe) || 0) + (parseFloat(l.haber) || 0);
+      if (!l.cuenta_id) { toast.error(`Línea ${i + 1}: seleccione la cuenta`); return; }
+      if (!cuentas.some((c) => c.id === l.cuenta_id)) {
+        toast.error(`Línea ${i + 1}: la cuenta es de control y no admite asientos manuales`);
+        return;
+      }
+      if (!(monto > 0) || parseFloat(l.debe) < 0 || parseFloat(l.haber) < 0) {
+        toast.error(`Línea ${i + 1}: ingrese un monto mayor que 0 en el Debe o en el Haber`);
+        return;
+      }
+    }
 
     const lineasLimpias = lineas
-      .filter((l) => l.cuenta_id && (parseFloat(l.debe) > 0 || parseFloat(l.haber) > 0))
       .map((l) => ({
         cuenta_id: l.cuenta_id,
         debe: parseFloat(l.debe) || 0,
@@ -127,14 +220,14 @@ export default function LibroDiario() {
 
     setSaving(true);
     try {
-      await crearAsiento(form.fecha, form.glosa, form.modulo, lineasLimpias);
+      await crearAsiento(form.fecha, form.glosa.trim(), form.modulo, lineasLimpias);
       toast.success('Asiento contable registrado exitosamente');
       setShowModal(false);
-      setForm({ fecha: new Date().toISOString().slice(0, 10), glosa: '', modulo: 'Manual' });
+      setForm({ fecha: hoyLocal(), glosa: '', modulo: 'Manual' });
       setLineas([{ cuenta_id: '', debe: '', haber: '' }, { cuenta_id: '', debe: '', haber: '' }]);
       loadData();
     } catch (err) {
-      toast.error('Error al crear asiento: ' + err.message);
+      toast.error(mensajeError(err));
     } finally {
       setSaving(false);
     }
@@ -166,9 +259,11 @@ export default function LibroDiario() {
           <p className="page__subtitle">{asientos.length} asiento(s) registrado(s) en el sistema</p>
         </div>
 
-        <button className="btn btn--primary" onClick={() => setShowModal(true)}>
-          <HiOutlinePlus /> Nuevo Asiento
-        </button>
+        {puedeCrear && (
+          <button className="btn btn--primary" onClick={() => setShowModal(true)}>
+            <HiOutlinePlus /> Nuevo Asiento
+          </button>
+        )}
       </div>
 
       {/* KPI Cards */}
@@ -176,19 +271,19 @@ export default function LibroDiario() {
         <div className="kpi-card">
           <div className="kpi-card__label">Total Débitos (Debe)</div>
           <div className="kpi-card__value" style={{ color: 'var(--primary)' }}>{formatBolivares(totalDebeVes)}</div>
-          <div className="kpi-card__sub" style={{ color: '#94A3B8' }}>{asientos.length} asientos analizados</div>
+          <div className="kpi-card__sub" style={{ color: 'var(--text-secondary)' }}>{asientos.length} asientos analizados</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-card__label">Total Créditos (Haber)</div>
           <div className="kpi-card__value" style={{ color: 'var(--info)' }}>{formatBolivares(totalHaberVes)}</div>
-          <div className="kpi-card__sub" style={{ color: '#94A3B8' }}>Sumas verificadas</div>
+          <div className="kpi-card__sub" style={{ color: 'var(--text-secondary)' }}>Sumas verificadas</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-card__label">Diferencia</div>
           <div className="kpi-card__value" style={{ color: diferencia < 0.01 ? '#22C55E' : '#EF4444' }}>
             {diferencia < 0.01 ? 'Balanceado' : formatBolivares(diferenciaVes)}
           </div>
-          <div className="kpi-card__sub" style={{ color: '#94A3B8' }}>
+          <div className="kpi-card__sub" style={{ color: 'var(--text-secondary)' }}>
             {diferencia < 0.01 ? 'Partida doble correcta' : '¡Revisar asientos descuadrados!'}
           </div>
         </div>
@@ -201,13 +296,15 @@ export default function LibroDiario() {
             <input
               type="text"
               placeholder="Buscar por glosa o número de asiento..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              aria-label="Buscar asientos por glosa o número"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
               style={{ width: '100%', padding: '0.6rem 0.85rem 0.6rem 2.2rem', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.9rem' }}
             />
             <HiOutlineMagnifyingGlass style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {recargando && <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Buscando...</span>}
             <HiOutlineFunnel style={{ color: 'var(--text-muted)' }} />
             <select value={filterModulo} onChange={(e) => setFilterModulo(e.target.value)} style={{ padding: '0.6rem 1rem', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '0.9rem' }}>
               <option value="todos">Todos los módulos</option>
@@ -220,10 +317,16 @@ export default function LibroDiario() {
       {/* Lista de Asientos */}
       {asientos.length === 0 ? (
         <div className="card" style={{ padding: '3rem', textAlign: 'center' }}>
-          <p style={{ color: 'var(--text-muted)', fontSize: '1rem', marginBottom: '1rem' }}>No hay asientos contables registrados.</p>
-          <button className="btn btn--primary" onClick={() => setShowModal(true)}>
-            <HiOutlinePlus /> Registrar Primer Asiento
-          </button>
+          <p style={{ color: 'var(--text-muted)', fontSize: '1rem', marginBottom: '1rem' }}>
+            {searchTerm || filterModulo !== 'todos'
+              ? 'Ningún asiento coincide con la búsqueda o el filtro.'
+              : 'No hay asientos contables registrados.'}
+          </p>
+          {puedeCrear && !searchTerm && filterModulo === 'todos' && (
+            <button className="btn btn--primary" onClick={() => setShowModal(true)}>
+              <HiOutlinePlus /> Registrar Primer Asiento
+            </button>
+          )}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -250,7 +353,23 @@ export default function LibroDiario() {
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', maxWidth: '400px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {asiento.glosa}
                   </span>
-                  <span className="badge badge--success">Registrado</span>
+                  {asiento.estado === 'ANULADO' ? (
+                    <span className="badge badge--danger" title={asiento.motivo_anulacion || undefined}>Anulado</span>
+                  ) : (
+                    <span className="badge badge--success">Registrado</span>
+                  )}
+                  {puedeAnular && esAsientoAnulable(asiento) && (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--xs"
+                      onClick={() => handleAnular(asiento)}
+                      disabled={anulandoId === asiento.id}
+                      title="Anular asiento manual (genera un asiento de reverso)"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: 'var(--danger)' }}
+                    >
+                      <HiOutlineNoSymbol /> {anulandoId === asiento.id ? 'Anulando...' : 'Anular'}
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -270,7 +389,7 @@ export default function LibroDiario() {
                       const cuenta = linea.plan_cuentas;
                       return (
                         <tr key={linea.id}>
-                          <td style={{ fontFamily: 'monospace', color: '#94A3B8' }}>{cuenta?.codigo}</td>
+                          <td style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{cuenta?.codigo}</td>
                           <td style={{ paddingLeft: Number(linea.haber) > 0 ? '2rem' : '0.75rem' }}>
                             <span style={{ fontWeight: Number(linea.debe) > 0 ? 600 : 400 }}>{cuenta?.nombre}</span>
                           </td>
@@ -298,7 +417,7 @@ export default function LibroDiario() {
       )}
 
       {/* ======== Modal Crear Asiento ======== */}
-      {showModal && (
+      {showModal && puedeCrear && (
         <div className="modal-overlay" onClick={() => !saving && setShowModal(false)}>
           <div className="modal modal--lg" onClick={(e) => e.stopPropagation()} style={{ maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
             <div className="modal__header">
@@ -308,12 +427,12 @@ export default function LibroDiario() {
               <div className="form-row">
                 <div className="form-group">
                   <label>Fecha Contable</label>
-                  <input type="date" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} required />
+                  <input type="date" max={hoyLocal()} value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} required />
                 </div>
                 <div className="form-group">
                   <label>Módulo / Tipo</label>
                   <select value={form.modulo} onChange={(e) => setForm({ ...form, modulo: e.target.value })}>
-                    {MODULOS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
+                    {MODULOS_MANUALES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </div>
               </div>
