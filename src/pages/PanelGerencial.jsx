@@ -11,7 +11,7 @@ import {
 } from 'react-icons/hi2';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { formatMonto, formatBs, formatFecha, getTasaPantalla } from '../utils/formatters';
+import { formatMonto, formatBs, formatFecha, getTasaPantalla, montosEnBs } from '../utils/formatters';
 import Pagination from '../components/common/Pagination';
 import usePaginacion from '../hooks/usePaginacion';
 import { hoyLocal, validarRango } from '../utils/validaciones';
@@ -311,7 +311,7 @@ export default function PanelGerencial() {
             const contenido = (
               <>
                 <span className="sig-estado" style={{ color: e.color, minWidth: '7.5rem' }}><e.icono /> {e.etiqueta}</span>
-                <span><strong>{a.categoria}:</strong> {a.mensaje}<small>{a.detalle}</small></span>
+                <span><strong>{a.categoria}:</strong> {montosEnBs(a.mensaje)}<small>{montosEnBs(a.detalle)}</small></span>
               </>
             );
             // Solo se enlaza a pantallas que el rol puede abrir

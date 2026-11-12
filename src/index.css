@@ -336,6 +336,8 @@ a:hover { color: var(--primary-hover); }
 
 .sidebar--collapsed {
   width: var(--sidebar-collapsed);
+  /* El menú flotante de cada grupo sale por fuera del sidebar: no recortarlo */
+  overflow: visible;
 }
 
 .sidebar__header {
@@ -696,6 +698,16 @@ a:hover { color: var(--primary-hover); }
   padding: 0.75rem;
   z-index: 1000;
   animation: flyoutSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Puente invisible entre el ícono y el menú flotante: el mouse lo cruza sin cerrarlo */
+.sidebar-flyout::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -14px;
+  width: 14px;
 }
 
 @keyframes flyoutSlideIn {
@@ -3263,4 +3275,14 @@ a:hover { color: var(--primary-hover); }
   .modal__footer {
     padding: 0.85rem 1.1rem;
   }
+}
+
+/* Controles nativos (calendario, selects, scrollbars) con el esquema del tema activo */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
 }

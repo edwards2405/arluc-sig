@@ -21,7 +21,12 @@ export function formatMonto(amountUSD, tasa = tasaPantalla) {
 
 /** Pasa a Bs los montos que vienen escritos en USD dentro de un texto de la base de datos. */
 export function montosEnBs(texto) {
-  return String(texto ?? '').replace(/(-?\d+(?:\.\d+)?) USD/g, (_, n) => formatMonto(Number(n)));
+  // La BD escribe miles con coma (4,612.58 USD) y a veces "A vs B USD" (el USD vale para los dos)
+  const numero = '-?\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?|-?\\d+(?:\\.\\d+)?';
+  const aBs = (n) => formatMonto(Number(n.replace(/,/g, '')));
+  return String(texto ?? '')
+    .replace(new RegExp(`(${numero}) vs (${numero}) USD`, 'g'), (_, a, b) => `${aBs(a)} vs ${aBs(b)}`)
+    .replace(new RegExp(`(${numero}) USD`, 'g'), (_, n) => aBs(n));
 }
 
 /** Etiqueta corta de un eje de gráfico cuyos datos están en USD. */
